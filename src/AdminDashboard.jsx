@@ -1,23 +1,69 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 
 const maroon = "#7a0019";
 
+/* ===== DEPARTMENT NORMALIZATION ===== */
+const normalizeDepartment = (dept) => {
+  if (!dept) return "";
+  const normalizedMap = {
+    "hr": "HR",
+    "finance": "Finance",
+    "registrar": "Registrar",
+    "accounting": "Accounting",
+  };
+  
+  const lowerDept = dept.toLowerCase();
+  return normalizedMap[lowerDept] || dept.charAt(0).toUpperCase() + dept.slice(1).toLowerCase();
+};
+
 export default function BACDashboard({ files, setFiles }) {
-  const [view, setView] = useState("dashboard"); // dashboard | archive
+  const [view, setView] = useState("dashboard"); // dashboard | archive | department
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [sortOrder, setSortOrder] = useState("latest"); // latest | oldest
   const [showFileModal, setShowFileModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [showDeclineModal, setShowDeclineModal] = useState(false);
   const [declineReason, setDeclineReason] = useState("");
   const [selectedFileIndex, setSelectedFileIndex] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("Processing...");
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
-  /* ===== UPDATE STATUS ===== */
+  // ✅ ENSURE ALL FILES PERSIST TO GLOBAL STORAGE (metadata only)
+  useEffect(() => {
+    try {
+      const filesMetadata = files.map(file => {
+        // Create a copy without the large fileData
+        const { fileData, ...metadata } = file;
+        return metadata;
+      });
+      localStorage.setItem("bacFiles", JSON.stringify(filesMetadata));
+    } catch (err) {
+      console.warn("⚠️ localStorage quota exceeded:", err.message);
+    }
+  }, [files]);
+
+  /* ===== UPDATE STATUS WITH LOADING ===== */
   const updateStatus = (index, status) => {
-    const updated = [...files];
-    updated[index] = { ...updated[index], status }; 
-    setFiles(updated); 
+    setIsLoading(true);
+    setLoadingMessage(`${status === "Approved" ? "Approving" : status === "Declined" ? "Declining" : "Processing"} file...`);
+    
+    setTimeout(() => {
+      const updated = [...files];
+      const fileName = updated[index].name;
+      updated[index] = { ...updated[index], status }; 
+      setFiles(updated);
+      setIsLoading(false);
+      setLoadingMessage("Processing...");
+      
+      // Show success modal
+      const action = status === "Approved" ? "approved" : status === "Declined" ? "declined" : "processed";
+      setSuccessMessage(`File "${fileName}" has been ${action} successfully!`);
+      setShowSuccessModal(true);
+    }, 1000);
   };
 
   /* ===== VIEW FILE ===== */
@@ -46,24 +92,39 @@ export default function BACDashboard({ files, setFiles }) {
       alert("Please enter a reason for declining.");
       return;
     }
-    const updated = [...files];
-    updated[selectedFileIndex] = { 
-      ...updated[selectedFileIndex], 
-      status: "Declined",
-      declineReason: declineReason 
-    };
-    setFiles(updated);
-    setShowDeclineModal(false);
+    
+    setIsLoading(true);
+    setLoadingMessage("Declining file...");
+    
+    setTimeout(() => {
+      const updated = [...files];
+      const fileName = updated[selectedFileIndex].name;
+      updated[selectedFileIndex] = { 
+        ...updated[selectedFileIndex], 
+        status: "Declined",
+        declineReason: declineReason 
+      };
+      setFiles(updated);
+      setShowDeclineModal(false);
+      setDeclineReason("");
+      setSelectedFileIndex(null);
+      setIsLoading(false);
+      setLoadingMessage("Processing...");
+      
+      // Show success modal
+      setSuccessMessage(`File "${fileName}" has been declined successfully!`);
+      setShowSuccessModal(true);
+    }, 1000);
     setDeclineReason("");
   };
 
   /* ===== SUMMARY COUNTS ===== */
   const totalFiles = files.length;
-  const pendingCount = files.filter(f => f.status === "Pending").length;
-  const approvedCount = files.filter(f => f.status === "Approved").length;
-  const archivedCount = files.filter(f => f.status === "Archived").length;
+  const pendingCount = files.filter(f => f.status === "Pending" && !f.isArchived).length;
+  const approvedCount = files.filter(f => f.status === "Approved" && !f.isArchived).length;
+  const archivedCount = files.filter(f => f.isArchived).length;
   const newSubmissionCount = files.filter(
-  (f) => f.status === "Pending"
+  (f) => f.status === "Pending" && !f.isArchived
 ).length;
 
 
@@ -76,13 +137,47 @@ export default function BACDashboard({ files, setFiles }) {
     );
   }, [files, search, departmentFilter, statusFilter]);
 
-  const activeFiles = filteredFiles.filter(f => f.status !== "Archived");
-  const archivedFiles = filteredFiles.filter(f => f.status === "Archived");
+  const activeFiles = useMemo(() => {
+    const active = filteredFiles.filter(f => !f.isArchived);
+    const sorted = [...active].sort((a, b) => {
+      if (sortOrder === "latest") {
+        return (b.timestamp || 0) - (a.timestamp || 0);
+      } else {
+        return (a.timestamp || 0) - (b.timestamp || 0);
+      }
+    });
+    return sorted;
+  }, [filteredFiles, sortOrder]);
 
-  const departments = [...new Set(files.map(f => f.department))];
+  const archivedFiles = useMemo(() => {
+    const archived = filteredFiles.filter(f => f.isArchived);
+    const sorted = [...archived].sort((a, b) => {
+      if (sortOrder === "latest") {
+        return (b.timestamp || 0) - (a.timestamp || 0);
+      } else {
+        return (a.timestamp || 0) - (b.timestamp || 0);
+      }
+    });
+    return sorted;
+  }, [filteredFiles, sortOrder]);
+
+  const departments = useMemo(() => {
+    const uniqueDepts = [...new Set(files.map(f => normalizeDepartment(f.department)))].filter(d => d);
+    return uniqueDepts.sort();
+  }, [files]);
 
   return (
     <div style={styles.layout}>
+      {/* LOADING SCREEN */}
+      {isLoading && (
+        <div style={styles.loadingOverlay}>
+          <div style={styles.loadingContainer}>
+            <div style={styles.loadingSpinner}></div>
+            <p style={styles.loadingText}>{loadingMessage}</p>
+          </div>
+        </div>
+      )}
+
       {/* ===== SIDEBAR ===== */}
       <aside style={styles.sidebar}>
         <div style={styles.logoBox}>
@@ -95,7 +190,7 @@ export default function BACDashboard({ files, setFiles }) {
   style={view === "dashboard" ? styles.navActive : styles.nav}
   onClick={() => setView("dashboard")}
 >
-  <span>Dashboard</span>
+  <span>Records</span>
 
   {newSubmissionCount > 0 && (
     <span style={styles.badge}>
@@ -111,6 +206,13 @@ export default function BACDashboard({ files, setFiles }) {
           >
             Archives
           </div>
+
+          <div
+            style={view === "department" ? styles.navActive : styles.nav}
+            onClick={() => setView("department")}
+          >
+            By Department
+          </div>
         </nav>
       </aside>
 
@@ -121,6 +223,8 @@ export default function BACDashboard({ files, setFiles }) {
           <h2>
             {view === "archive"
               ? "Archived Documents"
+              : view === "department"
+              ? "Files by Department"
               : "File Compilation Dashboard"}
           </h2>
           <span style={styles.schoolYear}>School Year 2025–2026</span>
@@ -169,6 +273,14 @@ export default function BACDashboard({ files, setFiles }) {
           </select>
 
           <button
+            style={styles.sortButton}
+            onClick={() => setSortOrder(sortOrder === "latest" ? "oldest" : "latest")}
+            title={sortOrder === "latest" ? "Latest to Oldest" : "Oldest to Latest"}
+          >
+            {sortOrder === "latest" ? "↓" : "↑"}
+          </button>
+
+          <button
             style={styles.button}
             onClick={() => {
               setSearch("");
@@ -189,6 +301,7 @@ export default function BACDashboard({ files, setFiles }) {
                 <th>Department</th>
                 <th>Type</th>
                 <th>Date</th>
+                <th>Time Submitted</th>
                 <th>Status</th>
                 <th>Action</th>
               </tr>
@@ -211,6 +324,7 @@ export default function BACDashboard({ files, setFiles }) {
                       <td>{f.department}</td>
                       <td>{f.type}</td>
                       <td>{f.date}</td>
+                      <td>{f.time || "N/A"}</td>
                       <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
                         <span
                           style={
@@ -248,7 +362,22 @@ export default function BACDashboard({ files, setFiles }) {
                         {view === "dashboard" && f.status === "Approved" && (
                           <button
                             style={styles.archiveButton}
-                            onClick={() => updateStatus(realIndex, "Archived")}
+                            onClick={() => {
+                              setIsLoading(true);
+                              setLoadingMessage("Archiving file...");
+                              setTimeout(() => {
+                                const updated = [...files];
+                                const fileName = updated[realIndex].name;
+                                updated[realIndex] = { ...updated[realIndex], isArchived: true };
+                                setFiles(updated);
+                                setIsLoading(false);
+                                setLoadingMessage("Processing...");
+                                
+                                // Show success modal
+                                setSuccessMessage(`File "${fileName}" has been archived successfully!`);
+                                setShowSuccessModal(true);
+                              }, 1000);
+                            }}
                           >
                             Archive
                           </button>
@@ -257,7 +386,22 @@ export default function BACDashboard({ files, setFiles }) {
                         {view === "archive" && (
                           <button
                             style={styles.restoreButton}
-                            onClick={() => updateStatus(realIndex, "Pending")}
+                            onClick={() => {
+                              setIsLoading(true);
+                              setLoadingMessage("Restoring file...");
+                              setTimeout(() => {
+                                const updated = [...files];
+                                const fileName = updated[realIndex].name;
+                                updated[realIndex] = { ...updated[realIndex], isArchived: false };
+                                setFiles(updated);
+                                setIsLoading(false);
+                                setLoadingMessage("Processing...");
+                                
+                                // Show success modal
+                                setSuccessMessage(`File "${fileName}" has been restored successfully!`);
+                                setShowSuccessModal(true);
+                              }, 1000);
+                            }}
                           >
                             Restore
                           </button>
@@ -270,6 +414,112 @@ export default function BACDashboard({ files, setFiles }) {
             </tbody>
           </table>
         </div>
+
+        {/* DEPARTMENT VIEW */}
+        {view === "department" && (
+          <div style={styles.departmentContainer}>
+            {departments.map((dept) => {
+              const deptFiles = files.filter(f => normalizeDepartment(f.department) === dept && !f.isArchived);
+              const approvedFiles = [...deptFiles.filter(f => f.status === "Approved")].sort((a, b) => {
+                if (sortOrder === "latest") {
+                  return (b.timestamp || 0) - (a.timestamp || 0);
+                } else {
+                  return (a.timestamp || 0) - (b.timestamp || 0);
+                }
+              });
+              const declinedFiles = [...deptFiles.filter(f => f.status === "Declined")].sort((a, b) => {
+                if (sortOrder === "latest") {
+                  return (b.timestamp || 0) - (a.timestamp || 0);
+                } else {
+                  return (a.timestamp || 0) - (b.timestamp || 0);
+                }
+              });
+              
+              return (
+                <div key={dept} style={styles.departmentSection}>
+                  <div style={styles.deptHeader}>
+                    <h3 style={styles.deptTitle}>{dept}</h3>
+                    <span style={styles.deptCount}>
+                      Approved: {approvedFiles.length} | Declined: {declinedFiles.length}
+                    </span>
+                  </div>
+
+                  {/* APPROVED FILES */}
+                  {approvedFiles.length > 0 && (
+                    <div style={styles.deptSubsection}>
+                      <h4 style={styles.statusHeader}>✓ Approved ({approvedFiles.length})</h4>
+                      <table style={styles.deptTable}>
+                        <thead>
+                          <tr>
+                            <th>File Name</th>
+                            <th>Date Submitted</th>
+                            <th>Time Submitted</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {approvedFiles.map((file, idx) => (
+                            <tr key={idx}>
+                              <td style={styles.fileName}>{file.name}</td>
+                              <td>{file.date}</td>
+                              <td>{file.time || "N/A"}</td>
+                              <td style={{ textAlign: "center" }}>
+                                <button
+                                  style={styles.viewButton}
+                                  onClick={() => handleViewFile(file)}
+                                >
+                                  View
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* DECLINED FILES */}
+                  {declinedFiles.length > 0 && (
+                    <div style={styles.deptSubsection}>
+                      <h4 style={styles.statusHeaderDeclined}>✗ Declined ({declinedFiles.length})</h4>
+                      <table style={styles.deptTable}>
+                        <thead>
+                          <tr>
+                            <th>File Name</th>
+                            <th>Date Submitted</th>
+                            <th>Reason</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {declinedFiles.map((file, idx) => (
+                            <tr key={idx}>
+                              <td style={styles.fileName}>{file.name}</td>
+                              <td>{file.date}</td>
+                              <td style={{ fontSize: "12px", color: "#666" }}>{file.declineReason || "N/A"}</td>
+                              <td style={{ textAlign: "center" }}>
+                                <button
+                                  style={styles.viewButton}
+                                  onClick={() => handleViewFile(file)}
+                                >
+                                  View
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {deptFiles.length === 0 && (
+                    <p style={styles.noDeptFiles}>No files for this department yet.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* DECLINE MODAL */}
         {showDeclineModal && (
@@ -339,7 +589,7 @@ export default function BACDashboard({ files, setFiles }) {
                     style={styles.downloadButton}
                     onClick={() => downloadFile(selectedFile)}
                   >
-                    ⬇ Download File
+                     Download File
                   </button>
                 </>
               ) : (
@@ -349,12 +599,38 @@ export default function BACDashboard({ files, setFiles }) {
                   </p>
                 </div>
               )}
-              <button
-                style={styles.closeFileButton}
-                onClick={() => setShowFileModal(false)}
-              >
-                Close
-              </button>
+              <div style={styles.buttonContainer}>
+                <button
+                  style={styles.closeFileButton}
+                  onClick={() => setShowFileModal(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SUCCESS MODAL */}
+        {showSuccessModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <h2 style={{ margin: 0, color: "white" }}>✓ Success!</h2>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 0 }}>
+                  {successMessage}
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={styles.successModalButton}
+                  onClick={() => setShowSuccessModal(false)}
+                >
+                  OK
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -375,6 +651,46 @@ const styles = {
     width: "100vw",
     height: "100vh",
     fontFamily: "Segoe UI",
+    position: "relative",
+  },
+
+  loadingOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0, 0, 0, 0.6)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 2000,
+  },
+
+  loadingContainer: {
+    background: "white",
+    borderRadius: "12px",
+    padding: "40px",
+    textAlign: "center",
+    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
+    minWidth: "300px",
+  },
+
+  loadingSpinner: {
+    width: "50px",
+    height: "50px",
+    border: "4px solid #f0f0f0",
+    borderTop: `4px solid ${maroon}`,
+    borderRadius: "50%",
+    animation: "spin 0.8s linear infinite",
+    margin: "0 auto 20px",
+  },
+
+  loadingText: {
+    color: maroon,
+    fontSize: "16px",
+    fontWeight: 600,
+    margin: 0,
   },
 
   sidebar: {
@@ -505,18 +821,51 @@ navActive: {
   button: {
   },
 
+  sortButton: {
+    background: "transparent",
+    color: maroon,
+    padding: "8px 12px",
+    border: "none",
+    outline: "none",
+    cursor: "pointer",
+    fontSize: 18,
+    fontWeight: "bold",
+    transition: "opacity 0.2s",
+  },
+
   buttonSmall: {
-    color: "#dc3545",
+    color: "white",
+    background: "#22c55e",
+    padding: "8px 16px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
   },
 
   declineButtonSmall: {
+    color: "white",
+    background: "red",
   },
 
   archiveButton: {
+    color: "white",
+    background: "#22c55e",
+    padding: "8px 16px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
   },
 
   restoreButton: {
-    color: "#198754",
+    color: "white",
+    background: "#22c55e",
+    padding: "8px 16px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
   },
 
   footer: {
@@ -604,11 +953,14 @@ navActive: {
   },
 
   downloadButton: {
-    color: "#198754",
-    background: "#e8f5e9",
+    color: "white",
+    background: "#22c55e",
     padding: "8px 16px",
     borderRadius: 6,
-    border: "1px solid #c8e6c9",
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    width: "100%",
   },
 
   noFileDataBox: {
@@ -627,6 +979,20 @@ navActive: {
   },
 
   closeFileButton: {
+    color: "white",
+    background: "#666",
+    padding: "8px 16px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    width: "100%",
+  },
+
+  buttonContainer: {
+    marginTop: 15,
+    display: "flex",
+    gap: 10,
   },
 
   modal: {
@@ -671,9 +1037,23 @@ navActive: {
   },
 
   cancelButton: {
+    color: "white",
+    background: "#666",
+    padding: "10px 20px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
   },
 
   confirmButton: {
+    color: "white",
+    background: "#22c55e",
+    padding: "10px 20px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
   },
   badge: {
   marginLeft: "auto",
@@ -688,5 +1068,116 @@ navActive: {
   fontSize: 11,
   fontWeight: 700,
 },
+
+  /* ===== DEPARTMENT VIEW STYLES ===== */
+  departmentContainer: {
+    padding: "20px",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(700px, 1fr))",
+    gap: "20px",
+  },
+
+  departmentSection: {
+    background: "#fff",
+    border: `2px solid ${maroon}`,
+    borderRadius: "8px",
+    padding: "20px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+  },
+
+  deptHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottom: `2px solid ${maroon}`,
+    paddingBottom: "12px",
+    marginBottom: "16px",
+  },
+
+  deptTitle: {
+    margin: "0",
+    fontSize: "18px",
+    fontWeight: "700",
+    color: maroon,
+  },
+
+  deptCount: {
+    fontSize: "12px",
+    color: "#666",
+    fontWeight: "500",
+  },
+
+  deptSubsection: {
+    marginBottom: "16px",
+  },
+
+  statusHeader: {
+    margin: "12px 0 8px 0",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#2d5f2d",
+  },
+
+  statusHeaderDeclined: {
+    margin: "12px 0 8px 0",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#d32f2f",
+  },
+
+  deptTable: {
+    width: "100%",
+    borderCollapse: "collapse",
+    marginBottom: "8px",
+    fontSize: "13px",
+  },
+
+  noDeptFiles: {
+    textAlign: "center",
+    color: "#999",
+    fontStyle: "italic",
+    margin: "20px 0",
+  },
+
+  successModalContent: {
+    background: "white",
+    borderRadius: 12,
+    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.15)",
+    minWidth: 350,
+    maxWidth: 500,
+    overflow: "hidden",
+  },
+
+  successModalHeader: {
+    background: "#22c55e",
+    padding: "20px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  successModalBody: {
+    padding: "20px",
+    textAlign: "center",
+  },
+
+  successModalFooter: {
+    padding: "15px 20px",
+    display: "flex",
+    justifyContent: "center",
+    background: "#f5f5f5",
+    borderTop: "1px solid #eee",
+  },
+
+  successModalButton: {
+    background: "#22c55e",
+    color: "white",
+    padding: "10px 30px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 14,
+  },
 
 };

@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { signUp, signIn } from "./firebase/authService";
+import { createUserDocument, getUserDocument } from "./firebase/userService";
 
 const maroon = "#7a0019";
 
-export default function Auth({ onLogin }) {
+export default function Auth({ onLogin, onBackToRole }) {
   const [isSignup, setIsSignup] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -11,6 +13,8 @@ export default function Auth({ onLogin }) {
   const [lastName, setLastName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -23,30 +27,43 @@ export default function Auth({ onLogin }) {
       return;
     }
 
-    const users = JSON.parse(localStorage.getItem("bacUsers") || "[]");
-    const user = users.find(u => u.email === email && u.password === password);
+    // Firebase login
+    signIn(email, password)
+      .then(async (result) => {
+        if (!result.success) {
+          setError(result.error || "Login failed. Please check your credentials.");
+          setLoading(false);
+          return;
+        }
 
-    if (!user) {
-      setError("Invalid email or password");
-      setLoading(false);
-      return;
-    }
+        // Get user data from Firestore
+        const userDoc = await getUserDocument(result.user.uid);
+        
+        if (!userDoc.success || !userDoc.data) {
+          setError("User profile not found in database");
+          setLoading(false);
+          return;
+        }
 
-    localStorage.setItem("currentUser", JSON.stringify({
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-    }));
-
-    setLoading(false);
-    onLogin();
+        // Save to localStorage
+        localStorage.setItem("currentUser", JSON.stringify(userDoc.data));
+        
+        setLoading(false);
+        onLogin();
+      })
+      .catch((err) => {
+        console.error("[Auth] Login error:", err);
+        setError("Login failed: " + err.message);
+        setLoading(false);
+      });
   };
 
-  const handleSignup = (e) => {
+  const handleSignup = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
+    // Validation
     if (!firstName.trim() || !lastName.trim() || !email.trim() || !password.trim()) {
       setError("All fields are required");
       setLoading(false);
@@ -71,25 +88,67 @@ export default function Auth({ onLogin }) {
       return;
     }
 
-    const users = JSON.parse(localStorage.getItem("bacUsers") || "[]");
-    
-    if (users.find(u => u.email === email)) {
-      setError("Email already registered");
+    try {
+      console.log("[Auth] Starting signup...");
+      
+      // Step 1: Create Firebase Auth user
+      const signUpResult = await signUp(email, password, `${firstName} ${lastName}`);
+      
+      if (!signUpResult.success) {
+        console.error("[Auth] Firebase signup failed:", signUpResult.error);
+        setError("Signup failed: " + signUpResult.error);
+        setLoading(false);
+        return;
+      }
+
+      console.log("[Auth] Firebase user created, UID:", signUpResult.user.uid);
+
+      // Step 2: Save user data to Firestore
+      const userData = {
+        uid: signUpResult.user.uid,
+        email: email.trim(),
+        fname: firstName.trim(),
+        lname: lastName.trim(),
+        displayName: `${firstName} ${lastName}`,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        role: "user",
+        createdAt: new Date().toISOString(),
+      };
+
+      console.log("[Auth] Saving to Firestore:", userData);
+      
+      const dbResult = await createUserDocument(signUpResult.user.uid, userData);
+
+      if (!dbResult.success) {
+        console.error("[Auth] Firestore save failed:", dbResult.error);
+        setError("Signup succeeded but database save failed: " + dbResult.error);
+        setLoading(false);
+        return;
+      }
+
+      console.log("[Auth] Success! User saved to database");
+
+      // Save to localStorage
+      localStorage.setItem("currentUser", JSON.stringify(userData));
+
+      // Show success modal
+      setSuccessMessage(`Welcome ${firstName}! Your account has been created successfully.`);
+      setShowSuccessModal(true);
+      
       setLoading(false);
-      return;
+      
+      // Redirect after 2 seconds
+      setTimeout(() => {
+        setShowSuccessModal(false);
+        onLogin();
+      }, 2000);
+
+    } catch (err) {
+      console.error("[Auth] Unexpected error:", err.message);
+      setError("Error: " + err.message);
+      setLoading(false);
     }
-
-    const newUser = { firstName, lastName, email, password };
-    users.push(newUser);
-    localStorage.setItem("bacUsers", JSON.stringify(users));
-    localStorage.setItem("currentUser", JSON.stringify({
-      email: newUser.email,
-      firstName: newUser.firstName,
-      lastName: newUser.lastName,
-    }));
-
-    setLoading(false);
-    onLogin();
   };
 
   return (
@@ -249,6 +308,48 @@ export default function Auth({ onLogin }) {
           <p style={styles.footerText}>© 2026 BAC | Records Management System</p>
         </div>
       </div>
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h2 style={{ margin: 0, color: "white" }}> Success!</h2>
+            </div>
+            <div style={styles.modalBody}>
+              <p style={{ fontSize: 16, color: "#333", marginBottom: 20 }}>
+                {successMessage}
+              </p>
+              <p style={{ fontSize: 13, color: "#666", marginBottom: 0 }}>
+                Redirecting to dashboard...
+              </p>
+            </div>
+            <div style={styles.modalFooter}>
+              <div style={styles.spinner}></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LOADING SCREEN */}
+      {loading && (
+        <div style={styles.loadingOverlay}>
+          <div style={styles.loadingContainer}>
+            <div style={styles.loadingSpinner}></div>
+            <p style={styles.loadingText}>Logging in...</p>
+          </div>
+        </div>
+      )}
+
+      <div style={styles.footer}>
+        <button
+          onClick={onBackToRole}
+          style={styles.backButton}
+        >
+          ← Back to Role Selection
+        </button>
+        <p style={styles.footerText}>© 2026 BAC | Records Management System</p>
+      </div>
     </div>
   );
 }
@@ -401,9 +502,109 @@ const styles = {
     textAlign: "center",
   },
 
+  backButton: {
+    background: "none",
+    border: "none",
+    color: maroon,
+    fontSize: "13px",
+    cursor: "pointer",
+    marginBottom: "10px",
+    fontWeight: 500,
+    display: "block",
+    width: "100%",
+    padding: "8px 0",
+    transition: "opacity 0.2s",
+  },
+
   footerText: {
     margin: 0,
     fontSize: 12,
     color: "#999",
+  },
+
+  modalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0, 0, 0, 0.5)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+
+  modalContent: {
+    background: "white",
+    borderRadius: 12,
+    boxShadow: "0 10px 50px rgba(0, 0, 0, 0.2)",
+    width: "100%",
+    maxWidth: 400,
+    overflow: "hidden",
+    animation: "slideIn 0.3s ease-out",
+  },
+
+  modalHeader: {
+    background: maroon,
+    color: "white",
+    padding: 25,
+    textAlign: "center",
+  },
+
+  modalBody: {
+    padding: 30,
+    textAlign: "center",
+  },
+
+  modalFooter: {
+    padding: 20,
+    textAlign: "center",
+    background: "#f9f9f9",
+  },
+
+  spinner: {
+    display: "inline-block",
+    width: 20,
+    height: 20,
+    border: "3px solid #f0f0f0",
+    borderTop: `3px solid ${maroon}`,
+    borderRadius: "50%",
+    animation: "spin 0.8s linear infinite",
+  },
+
+  loadingOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0, 0, 0, 0.6)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 2000,
+  },
+
+  loadingContainer: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 20,
+  },
+
+  loadingSpinner: {
+    width: 50,
+    height: 50,
+    border: "4px solid rgba(255, 255, 255, 0.3)",
+    borderTop: "4px solid white",
+    borderRadius: "50%",
+    animation: "spin 0.8s linear infinite",
+  },
+
+  loadingText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: 600,
   },
 };

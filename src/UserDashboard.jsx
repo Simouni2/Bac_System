@@ -1,64 +1,157 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 const maroon = "#7a0019";
 
+/* ===== DEPARTMENT NORMALIZATION ===== */
+const normalizeDepartment = (dept) => {
+  if (!dept) return "";
+  const normalizedMap = {
+    "hr": "HR",
+    "finance": "Finance",
+    "registrar": "Registrar",
+    "accounting": "Accounting",
+  };
+  
+  const lowerDept = dept.toLowerCase();
+  return normalizedMap[lowerDept] || dept.charAt(0).toUpperCase() + dept.slice(1).toLowerCase();
+};
+
+
 export default function UserDashboard({ files, setFiles }) {
+
+  // ✅ GET LOGGED-IN USER FIRST
+  const currentUser = JSON.parse(localStorage.getItem("currentUser") || "{}");
+  const userKey = currentUser?.email;
+
+  // Safety check - if no user or no files state, show error
+  if (!userKey || files === undefined || !setFiles) {
+    console.error("❌ UserDashboard Error:", { 
+      userKey, 
+      currentUser,
+      hasFiles: files !== undefined,
+      hasSetFiles: typeof setFiles === 'function',
+      filesType: typeof files,
+      fileValue: files
+    });
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", flexDirection: "column", gap: 20 }}>
+        <div style={{ fontSize: 18, color: "#999" }}>⚠️ Error loading user dashboard.</div>
+        <button onClick={() => window.location.reload()} style={{ padding: "10px 20px", background: "#7a0019", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
+
+  // ================= UI STATES - DECLARE FIRST =================
   const [view, setView] = useState("upload");
+  const [sortOrder, setSortOrder] = useState("latest"); // latest | oldest
+  const [showUploadSuccessModal, setShowUploadSuccessModal] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
   const [department, setDepartment] = useState("");
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [showDeclineModal, setShowDeclineModal] = useState(false);
   const [selectedDeclineReason, setSelectedDeclineReason] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState([]);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [approvedFiles, setApprovedFiles] = useState([]);
-  const [shownApprovedFileNames, setShownApprovedFileNames] = useState(() => {
-    const saved = localStorage.getItem("shownApprovedFileNames");
-    return saved ? new Set(JSON.parse(saved)) : new Set();
-  });
   const [showFileModal, setShowFileModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [filesToUpload, setFilesToUpload] = useState([]); // Files being uploaded before confirmation
 
-  // Profile and Settings states
-  const [profile, setProfile] = useState(() => {
-    const saved = localStorage.getItem("userProfile");
-    return saved ? JSON.parse(saved) : {
-      firstName: "",
-      lastName: "",
-      middleInitial: "",
-      email: "",
-      department: ""
-    };
+  // ================= PROFILE STATES =================
+  const [profile, setProfile] = useState({
+    fname: "",
+    lname: "",
+    email: userKey,
+    password: "",
+    department: ""
   });
+  const [profileMessage, setProfileMessage] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [profileMessage, setProfileMessage] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
 
-  useEffect(() => {
-    localStorage.setItem("shownApprovedFileNames", JSON.stringify([...shownApprovedFileNames]));
-  }, [shownApprovedFileNames]);
+  // ✅ GET ONLY THIS USER'S FILES FROM GLOBAL STORAGE
+  const userFiles = (files && userKey) ? files.filter(f => f.userEmail === userKey) : [];
+
+  // ✅ SORTED FILES BASED ON SORT ORDER
+  const sortedUserFiles = useMemo(() => {
+    const sorted = [...userFiles].sort((a, b) => {
+      if (sortOrder === "latest") {
+        return (b.timestamp || 0) - (a.timestamp || 0);
+      } else {
+        return (a.timestamp || 0) - (b.timestamp || 0);
+      }
+    });
+    return sorted;
+  }, [userFiles, sortOrder]);
+
+  const pendingFiles = useMemo(() => {
+    return sortedUserFiles.filter(f => f.status === "Pending");
+  }, [sortedUserFiles]);
+
+  const approvedFiles = useMemo(() => {
+    return sortedUserFiles.filter(f => f.status === "Approved");
+  }, [sortedUserFiles]);
+
+  const declinedFiles = useMemo(() => {
+    return sortedUserFiles.filter(f => f.status === "Declined");
+  }, [sortedUserFiles]);
+
+  // ================= APPROVAL NOTIFICATIONS (PER USER) =================
+  const [shownApprovedFileNames, setShownApprovedFileNames] = useState(() => {
+    if (!userKey) return new Set();
+    const saved = localStorage.getItem(`shownApprovedFileNames_${userKey}`);
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
 
   useEffect(() => {
-    const approved = files.filter(f => f.status === "Approved");
+    if (userKey) {
+      localStorage.setItem(
+        `shownApprovedFileNames_${userKey}`,
+        JSON.stringify([...shownApprovedFileNames])
+      );
+    }
+  }, [shownApprovedFileNames, userKey]);
+
+  useEffect(() => {
+    const approved = userFiles.filter(f => f.status === "Approved");
     const newlyApproved = approved.filter(f => !shownApprovedFileNames.has(f.name));
     if (newlyApproved.length > 0) {
-      setApprovedFiles(newlyApproved);
       setShowSuccessModal(true);
     }
-  }, [files, shownApprovedFileNames]);
+  }, [userFiles, shownApprovedFileNames]);
 
   useEffect(() => {
     if (showSuccessModal) {
       const timer = setTimeout(() => {
         setShowSuccessModal(false);
-        setShownApprovedFileNames(prev => new Set([...prev, ...approvedFiles.map(f => f.name)]));
+        const approved = userFiles.filter(f => f.status === "Approved");
+        setShownApprovedFileNames(prev =>
+          new Set([...prev, ...approved.map(f => f.name)])
+        );
       }, 5000);
       return () => clearTimeout(timer);
     }
-  }, [showSuccessModal, approvedFiles]);
+  }, [showSuccessModal, userFiles]);
 
+  // ✅ RESET PROFILE WHEN USER CHANGES
+  useEffect(() => {
+    if (userKey) {
+      const saved = localStorage.getItem(`userProfile_${userKey}`);
+      setProfile(saved ? JSON.parse(saved) : {
+        fname: "",
+        lname: "",
+        email: userKey,
+        password: "",
+        department: ""
+      });
+    }
+  }, [userKey]);
+
+  // ================= HELPERS =================
   const validate = () => {
     if (!department.trim()) {
       setError("Department is required before uploading documents.");
@@ -66,22 +159,40 @@ export default function UserDashboard({ files, setFiles }) {
     }
     setError("");
     return true;
-  };    
+  };
 
   const handleFiles = (fileList) => {
     if (!validate()) return;
 
-    const filePromises = Array.from(fileList).map((f) => {
+    setIsUploading(true);
+    setUploadProgress("Processing files...");
+
+    const filePromises = Array.from(fileList).map((f, index) => {
       return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => {
+          // Get current date and time
+          const now = new Date();
+          const date = now.toLocaleDateString();
+          const time = now.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: true 
+          });
+
+          // Update progress
+          setUploadProgress(`Processing: ${index + 1}/${fileList.length}`);
+
           resolve({
             name: f.name,
-            department,
+            department: normalizeDepartment(department),
             type: "General",
-            date: new Date().toLocaleDateString(),
+            date: date,
+            time: time,
+            timestamp: now.getTime(),
             status: "Pending",
             fileData: e.target.result,
+            userEmail: userKey,
           });
         };
         reader.readAsDataURL(f);
@@ -89,20 +200,36 @@ export default function UserDashboard({ files, setFiles }) {
     });
 
     Promise.all(filePromises).then((newFiles) => {
-      setPendingFiles(newFiles);
+      setFilesToUpload(newFiles);
+      setIsUploading(false);
+      setUploadProgress("");
       setShowConfirmModal(true);
     });
   };
 
   const confirmUpload = () => {
-    setFiles((prev) => [...prev, ...pendingFiles]);
+    // Show loading screen
     setShowConfirmModal(false);
-    setPendingFiles([]);
+    setIsUploading(true);
+    setUploadProgress("Finalizing upload...");
+
+    // Simulate upload delay with realistic timing
+    setTimeout(() => {
+      setFiles(prev => {
+        const updated = [...prev, ...filesToUpload];
+        console.log("✅ Files being saved:", updated.length, "total files");
+        return updated;
+      });
+      setFilesToUpload([]);
+      setIsUploading(false);
+      setUploadProgress("");
+      setShowUploadSuccessModal(true);
+    }, 1500);
   };
 
   const cancelUpload = () => {
     setShowConfirmModal(false);
-    setPendingFiles([]);
+    setFilesToUpload([]);
   };
 
   const uploadFile = (e) => {
@@ -143,8 +270,7 @@ export default function UserDashboard({ files, setFiles }) {
   };
 
   const handleProfileChange = (field, value) => {
-    const updated = { ...profile, [field]: value };
-    setProfile(updated);
+    setProfile(prev => ({ ...prev, [field]: value }));
   };
 
   const saveProfile = () => {
@@ -153,26 +279,23 @@ export default function UserDashboard({ files, setFiles }) {
       return;
     }
 
-    // Save profile to localStorage
-    localStorage.setItem("userProfile", JSON.stringify(profile));
+    localStorage.setItem(`userProfile_${userKey}`, JSON.stringify(profile));
 
-    // Update current user info
-    const currentUser = JSON.parse(localStorage.getItem("currentUser"));
-    if (currentUser) {
-      const updatedUser = {
+    localStorage.setItem(
+      "currentUser",
+      JSON.stringify({
         email: profile.email,
         firstName: profile.firstName,
-        lastName: profile.lastName,
-      };
-      localStorage.setItem("currentUser", JSON.stringify(updatedUser));
-    }
+        lastName: profile.lastName
+      })
+    );
 
     setProfileMessage("✓ Profile saved successfully!");
     setTimeout(() => setProfileMessage(""), 3000);
   };
 
   const handlePasswordChange = () => {
-    if (!password.trim() || !confirmPassword.trim()) {
+    if (!password || !confirmPassword) {
       setPasswordMessage("Both password fields are required!");
       return;
     }
@@ -185,16 +308,12 @@ export default function UserDashboard({ files, setFiles }) {
       return;
     }
 
-    // Update password in user account
     const users = JSON.parse(localStorage.getItem("bacUsers") || "[]");
-    const currentUser = JSON.parse(localStorage.getItem("currentUser"));
-    
-    if (currentUser) {
-      const userIndex = users.findIndex(u => u.email === currentUser.email);
-      if (userIndex !== -1) {
-        users[userIndex].password = password;
-        localStorage.setItem("bacUsers", JSON.stringify(users));
-      }
+    const userIndex = users.findIndex(u => u.email === userKey);
+
+    if (userIndex !== -1) {
+      users[userIndex].password = password;
+      localStorage.setItem("bacUsers", JSON.stringify(users));
     }
 
     setPasswordMessage("✓ Password reset successfully!");
@@ -203,8 +322,23 @@ export default function UserDashboard({ files, setFiles }) {
     setTimeout(() => setPasswordMessage(""), 3000);
   };
 
+
   return (
     <div style={styles.layout}>
+      {/* LOADING SCREEN */}
+      {isUploading && (
+        <div style={styles.loadingOverlay}>
+          <div style={styles.loadingContainer}>
+            <div style={styles.uploadSpinner}></div>
+            <h3 style={styles.loadingTitle}>Uploading Documents</h3>
+            <p style={styles.uploadProgressText}>{uploadProgress}</p>
+            <div style={styles.progressBar}>
+              <div style={styles.progressFill}></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SIDEBAR */}
       <aside style={styles.sidebar}>
         <div style={styles.logoBox}>
@@ -282,7 +416,7 @@ export default function UserDashboard({ files, setFiles }) {
                 placeholder="Enter your Department (e.g. Finance, HR, Registrar)"
                 value={department}
                 onChange={(e) => {
-                  setDepartment(e.target.value);
+                  setDepartment(normalizeDepartment(e.target.value));
                   if (error) setError("");
                 }}
                 style={{
@@ -326,22 +460,33 @@ export default function UserDashboard({ files, setFiles }) {
 
             {/* TABLE */}
             <div style={styles.tableBox}>
-              <h3>My Submitted Files</h3>
+              <div style={styles.tableHeader}>
+                <h3>My Submitted Files</h3>
+                <button
+                  style={styles.sortButton}
+                  onClick={() => setSortOrder(sortOrder === "latest" ? "oldest" : "latest")}
+                  title={sortOrder === "latest" ? "Latest to Oldest" : "Oldest to Latest"}
+                >
+                  {sortOrder === "latest" ? "↓ Latest" : "↑ Oldest"}
+                </button>
+              </div>
               <table style={styles.table}>
                 <thead>
                   <tr>
                     <th>File Name</th>
                     <th>Department</th>
                     <th>Date</th>
+                    <th>Time Submitted</th>
                     <th style={{ textAlign: "center" }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {files.map((f, i) => (
+                  {sortedUserFiles.map((f, i) => (
                     <tr key={i} style={f.status === "Declined" ? { cursor: "pointer" } : {}} onClick={() => f.status === "Declined" && handleViewDeclineReason(f.declineReason)}>
                       <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={(e) => { e.stopPropagation(); handleViewFile(f); }}>{f.name}</td>
                       <td>{f.department}</td>
                       <td>{f.date}</td>
+                      <td>{f.time || "N/A"}</td>
                       <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
                         <span
                           style={
@@ -366,14 +511,24 @@ export default function UserDashboard({ files, setFiles }) {
         {/* SUBMISSIONS VIEW */}
         {view === "submissions" && (
           <>
-            {files.length === 0 ? (
+            {sortedUserFiles.length === 0 ? (
               <div style={styles.card}>
                 <p style={styles.emptyMessage}>No submissions yet. Start by uploading a document in the "Upload Files" section.</p>
               </div>
             ) : (
               <>
+                <div style={styles.sortButtonContainer}>
+                  <button
+                    style={styles.sortButton}
+                    onClick={() => setSortOrder(sortOrder === "latest" ? "oldest" : "latest")}
+                    title={sortOrder === "latest" ? "Latest to Oldest" : "Oldest to Latest"}
+                  >
+                    {sortOrder === "latest" ? "↓" : "↑"}
+                  </button>
+                </div>
+
                 {/* PENDING SECTION */}
-                {files.filter(f => f.status === "Pending").length > 0 && (
+                {pendingFiles.length > 0 && (
                   <div style={styles.card}>
                     <h3>Pending Review</h3>
                     <table style={styles.table}>
@@ -382,15 +537,17 @@ export default function UserDashboard({ files, setFiles }) {
                           <th>File Name</th>
                           <th>Department</th>
                           <th>Date</th>
+                          <th>Time Submitted</th>
                           <th style={{ textAlign: "center" }}>Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {files.filter(f => f.status === "Pending").map((f, i) => (
+                        {pendingFiles.map((f, i) => (
                           <tr key={i}>
                             <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
                             <td>{f.department}</td>
                             <td>{f.date}</td>
+                            <td>{f.time || "N/A"}</td>
                             <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
                               <span style={styles.pending}>
                                 {f.status}
@@ -404,7 +561,7 @@ export default function UserDashboard({ files, setFiles }) {
                 )}
 
                 {/* APPROVED SECTION */}
-                {files.filter(f => f.status === "Approved").length > 0 && (
+                {approvedFiles.length > 0 && (
                   <div style={styles.card}>
                     <h3>Approved Papers</h3>
                     <table style={styles.table}>
@@ -413,15 +570,17 @@ export default function UserDashboard({ files, setFiles }) {
                           <th>File Name</th>
                           <th>Department</th>
                           <th>Date</th>
+                          <th>Time Submitted</th>
                           <th style={{ textAlign: "center" }}>Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {files.filter(f => f.status === "Approved").map((f, i) => (
+                        {approvedFiles.map((f, i) => (
                           <tr key={i}>
                             <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
                             <td>{f.department}</td>
                             <td>{f.date}</td>
+                            <td>{f.time || "N/A"}</td>
                             <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
                               <span style={styles.approved}>
                                 {f.status}
@@ -435,7 +594,7 @@ export default function UserDashboard({ files, setFiles }) {
                 )}
 
                 {/* DECLINED SECTION */}
-                {files.filter(f => f.status === "Declined").length > 0 && (
+                {declinedFiles.length > 0 && (
                   <div style={styles.card}>
                     <h3>Declined Papers</h3>
                     <table style={styles.table}>
@@ -444,16 +603,18 @@ export default function UserDashboard({ files, setFiles }) {
                           <th>File Name</th>
                           <th>Department</th>
                           <th>Date</th>
+                          <th>Time Submitted</th>
                           <th>Decline Reason</th>
                           <th style={{ textAlign: "center" }}>Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {files.filter(f => f.status === "Declined").map((f, i) => (
+                        {declinedFiles.map((f, i) => (
                           <tr key={i}>
                             <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
                             <td>{f.department}</td>
                             <td>{f.date}</td>
+                            <td>{f.time || "N/A"}</td>
                             <td style={{ fontSize: "13px", color: "#666", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "200px" }} title={f.declineReason}>
                               {f.declineReason || "N/A"}
                             </td>
@@ -893,7 +1054,7 @@ export default function UserDashboard({ files, setFiles }) {
             <div style={styles.modal}>
               <h3 style={styles.modalTitle}>Confirm Upload</h3>
               <p style={styles.modalSubtitle}>
-                You are about to upload {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''} to the {department} department.
+                You are about to upload {filesToUpload.length} file{filesToUpload.length !== 1 ? 's' : ''} to the {department} department.
               </p>
               <p style={styles.modalSubtitle}>Do you want to continue?</p>
               <div style={styles.modalButtons}>
@@ -913,6 +1074,30 @@ export default function UserDashboard({ files, setFiles }) {
             </div>
           </div>
         )}
+        {showUploadSuccessModal && (
+  <div style={styles.modalOverlay}>
+    <div style={styles.modal}>
+      <h3 style={styles.modalTitleSuccess}>Upload Successful </h3>
+      <p style={styles.modalSubtitle}>
+        {filesToUpload.length || "Your"} file
+        {filesToUpload.length !== 1 ? "s have" : " has"} been successfully uploaded.
+      </p>
+      <p style={styles.modalSubtitle}>
+        Please wait for administrator review.
+      </p>
+
+      <div style={styles.modalButtons}>
+        <button
+          style={styles.confirmButton}
+          onClick={() => setShowUploadSuccessModal(false)}
+        >
+          OK
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
 
         {/* FILE VIEW MODAL */}
         {showFileModal && selectedFile && (
@@ -1033,6 +1218,67 @@ const styles = {
     height: "100vh",
     fontFamily: "Segoe UI",
     overflow: "hidden",
+    position: "relative",
+  },
+
+  loadingOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0, 0, 0, 0.6)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 2000,
+  },
+
+  loadingContainer: {
+    background: "white",
+    borderRadius: "12px",
+    padding: "50px 40px",
+    textAlign: "center",
+    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
+    minWidth: "350px",
+  },
+
+  uploadSpinner: {
+    width: "60px",
+    height: "60px",
+    border: "5px solid #f0f0f0",
+    borderTop: `5px solid ${maroon}`,
+    borderRadius: "50%",
+    animation: "spin 0.8s linear infinite",
+    margin: "0 auto 25px",
+  },
+
+  loadingTitle: {
+    color: maroon,
+    fontSize: "20px",
+    fontWeight: 600,
+    margin: "0 0 15px 0",
+  },
+
+  uploadProgressText: {
+    color: "#666",
+    fontSize: "14px",
+    margin: "0 0 20px 0",
+  },
+
+  progressBar: {
+    width: "100%",
+    height: "6px",
+    background: "#e0e0e0",
+    borderRadius: "3px",
+    overflow: "hidden",
+  },
+
+  progressFill: {
+    height: "100%",
+    background: maroon,
+    borderRadius: "3px",
+    animation: "slideProgress 2s infinite",
   },
 
   sidebar: {
@@ -1454,9 +1700,13 @@ const styles = {
   },
 
   saveButton: {
+    color:"white",
+    background: "green",
   },
 
   resetPasswordButton: {
+    color: "white",
+    background: maroon,
   },
 
   emptyMessage: {
@@ -1551,9 +1801,41 @@ const styles = {
   },
 
   cancelButton: {
+    color: "white",
+    background: "#666",
+    padding: "10px 20px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
   },
 
   confirmButton: {
+    color: "white",
+    background: "#22c55e",
+    padding: "10px 20px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+
+  sortButton: {
+    background: "transparent",
+    color: "#7a0019",
+    padding: "8px 12px",
+    border: "none",
+    outline: "none",
+    cursor: "pointer",
+    fontSize: 18,
+    fontWeight: "bold",
+    transition: "opacity 0.2s",
+  },
+
+  sortButtonContainer: {
+    display: "flex",
+    justifyContent: "flex-end",
+    marginBottom: "16px",
   },
 
   approvedFilesList: {
