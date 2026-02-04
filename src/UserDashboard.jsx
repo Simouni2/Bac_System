@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
+import { saveFilesToFirestore } from "./firebase/userService";
+import profileImage from "./assets/profile2.jpg";
 
 const maroon = "#7a0019";
 
@@ -59,19 +61,32 @@ export default function UserDashboard({ files, setFiles }) {
   const [showFileModal, setShowFileModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [filesToUpload, setFilesToUpload] = useState([]); // Files being uploaded before confirmation
-
-  // ================= PROFILE STATES =================
-  const [profile, setProfile] = useState({
-    fname: "",
-    lname: "",
-    email: userKey,
-    password: "",
-    department: ""
+  const [ppmpDepartments, setPpmpDepartments] = useState(() => {
+    const saved = localStorage.getItem("ppmpDepartments");
+    return saved ? JSON.parse(saved) : [];
   });
-  const [profileMessage, setProfileMessage] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordMessage, setPasswordMessage] = useState("");
+  const [userPPMPStatus, setUserPPMPStatus] = useState(() => {
+    const saved = localStorage.getItem(`userPPMP_${userKey}`);
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [userPPMPStatuses, setUserPPMPStatuses] = useState(() => {
+    const saved = localStorage.getItem("userPPMPStatuses");
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [bacTeamMembers, setBacTeamMembers] = useState(() => {
+    const saved = localStorage.getItem("bacTeamMembers");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [docTemplates, setDocTemplates] = useState(() => {
+    const saved = localStorage.getItem("docTemplates");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [allUsers, setAllUsers] = useState(() => {
+    const saved = localStorage.getItem("bacUsers");
+    return saved ? JSON.parse(saved) : [];
+  });
+
+
 
   // ✅ GET ONLY THIS USER'S FILES FROM GLOBAL STORAGE
   const userFiles = (files && userKey) ? files.filter(f => f.userEmail === userKey) : [];
@@ -137,19 +152,75 @@ export default function UserDashboard({ files, setFiles }) {
     }
   }, [showSuccessModal, userFiles]);
 
-  // ✅ RESET PROFILE WHEN USER CHANGES
+  // ✅ DATA PERSISTENCE & RECOVERY - BACKUP FILES
   useEffect(() => {
-    if (userKey) {
-      const saved = localStorage.getItem(`userProfile_${userKey}`);
-      setProfile(saved ? JSON.parse(saved) : {
-        fname: "",
-        lname: "",
-        email: userKey,
-        password: "",
-        department: ""
-      });
+    if (files && files.length > 0) {
+      try {
+        // Create backup of files every time they change
+        const backup = files.map(f => {
+          const { fileData, ...metadata } = f;
+          return { ...metadata, hasFileData: !!fileData };
+        });
+        localStorage.setItem("bacFiles_backup", JSON.stringify(backup));
+        localStorage.setItem("bacFiles_lastUpdate", new Date().toISOString());
+      } catch (err) {
+        console.warn("⚠️ Could not backup files:", err.message);
+      }
     }
-  }, [userKey]);
+  }, [files]);
+
+  // ✅ RECOVER LOST FILES IF NEEDED
+  useEffect(() => {
+    if (files && files.length === 0) {
+      try {
+        const backup = localStorage.getItem("bacFiles_backup");
+        if (backup) {
+          const parsedBackup = JSON.parse(backup);
+          if (parsedBackup.length > 0) {
+            console.log("🔄 Attempting file recovery from backup...");
+            setFiles(parsedBackup);
+          }
+        }
+      } catch (err) {
+        console.warn("⚠️ Could not recover files:", err.message);
+      }
+    }
+  }, []);
+
+  // ✅ LOAD FILES FROM LOCALSTORAGE ON COMPONENT MOUNT
+  useEffect(() => {
+    if (files.length === 0 && !localStorage.getItem("filesLoadedInSession")) {
+      try {
+        const savedFiles = localStorage.getItem("bacFiles");
+        if (savedFiles) {
+          const parsedFiles = JSON.parse(savedFiles);
+          if (parsedFiles.length > 0) {
+            setFiles(parsedFiles);
+            localStorage.setItem("filesLoadedInSession", "true");
+            console.log("✅ Files restored from localStorage:", parsedFiles.length, "files loaded");
+          }
+        }
+      } catch (err) {
+        console.warn("⚠️ Could not load files from localStorage:", err.message);
+      }
+    }
+  }, []);
+
+  // ✅ SYNC FILES TO LOCALSTORAGE IN REAL-TIME
+  useEffect(() => {
+    if (files && files.length > 0) {
+      try {
+        const filesMetadata = files.map(f => {
+          const { fileData, ...metadata } = f;
+          return metadata;
+        });
+        localStorage.setItem("bacFiles", JSON.stringify(filesMetadata));
+        console.log("💾 Files synced to localStorage:", filesMetadata.length, "files saved");
+      } catch (err) {
+        console.warn("⚠️ Could not sync files to localStorage:", err.message);
+      }
+    }
+  }, [files]);
 
   // ================= HELPERS =================
   const validate = () => {
@@ -207,24 +278,48 @@ export default function UserDashboard({ files, setFiles }) {
     });
   };
 
-  const confirmUpload = () => {
+  const confirmUpload = async () => {
     // Show loading screen
     setShowConfirmModal(false);
     setIsUploading(true);
-    setUploadProgress("Finalizing upload...");
+    setUploadProgress("Uploading to database...");
 
-    // Simulate upload delay with realistic timing
-    setTimeout(() => {
+    try {
+      console.log("📤 Starting Firestore upload...");
+      console.log("Files to upload:", filesToUpload);
+      console.log("User email:", userKey);
+      
+      // Save files to Firestore
+      const firestoreResult = await saveFilesToFirestore(
+        filesToUpload,
+        userKey,
+        currentUser?.firstName || currentUser?.fname || userKey.split("@")[0]
+      );
+
+      console.log("✓ Firestore upload result:", firestoreResult);
+
+      // Update local state with files
       setFiles(prev => {
         const updated = [...prev, ...filesToUpload];
         console.log("✅ Files being saved:", updated.length, "total files");
         return updated;
       });
+
       setFilesToUpload([]);
       setIsUploading(false);
       setUploadProgress("");
       setShowUploadSuccessModal(true);
-    }, 1500);
+
+      // Show notification about Firestore status
+      if (!firestoreResult.success) {
+        console.warn("⚠️ Warning: Files saved locally but Firestore upload had issues");
+      }
+    } catch (error) {
+      console.error("❌ Upload error:", error);
+      setIsUploading(false);
+      setUploadProgress("");
+      setError("Error uploading files. Please try again.");
+    }
   };
 
   const cancelUpload = () => {
@@ -269,58 +364,7 @@ export default function UserDashboard({ files, setFiles }) {
     }
   };
 
-  const handleProfileChange = (field, value) => {
-    setProfile(prev => ({ ...prev, [field]: value }));
-  };
 
-  const saveProfile = () => {
-    if (!profile.firstName.trim() || !profile.lastName.trim() || !profile.email.trim()) {
-      setProfileMessage("All fields are required!");
-      return;
-    }
-
-    localStorage.setItem(`userProfile_${userKey}`, JSON.stringify(profile));
-
-    localStorage.setItem(
-      "currentUser",
-      JSON.stringify({
-        email: profile.email,
-        firstName: profile.firstName,
-        lastName: profile.lastName
-      })
-    );
-
-    setProfileMessage("✓ Profile saved successfully!");
-    setTimeout(() => setProfileMessage(""), 3000);
-  };
-
-  const handlePasswordChange = () => {
-    if (!password || !confirmPassword) {
-      setPasswordMessage("Both password fields are required!");
-      return;
-    }
-    if (password !== confirmPassword) {
-      setPasswordMessage("Passwords do not match!");
-      return;
-    }
-    if (password.length < 8) {
-      setPasswordMessage("Password must be at least 8 characters long!");
-      return;
-    }
-
-    const users = JSON.parse(localStorage.getItem("bacUsers") || "[]");
-    const userIndex = users.findIndex(u => u.email === userKey);
-
-    if (userIndex !== -1) {
-      users[userIndex].password = password;
-      localStorage.setItem("bacUsers", JSON.stringify(users));
-    }
-
-    setPasswordMessage("✓ Password reset successfully!");
-    setPassword("");
-    setConfirmPassword("");
-    setTimeout(() => setPasswordMessage(""), 3000);
-  };
 
 
   return (
@@ -371,10 +415,10 @@ export default function UserDashboard({ files, setFiles }) {
           About BAC
         </div>
         <div 
-          style={view === "settings" ? styles.navActive : styles.nav}
-          onClick={() => setView("settings")}
+          style={view === "ppmp" ? styles.navActive : styles.nav}
+          onClick={() => setView("ppmp")}
         >
-          Settings
+           PPMP Status
         </div>
       </aside>
 
@@ -391,7 +435,7 @@ export default function UserDashboard({ files, setFiles }) {
               ? "Guidelines"
               : view === "about"
               ? "About BAC"
-              : "Settings"}
+              : "PPMP Status"}
           </h2>
           <span style={styles.schoolYear}>School Year 2025–2026</span>
         </div>
@@ -723,62 +767,46 @@ export default function UserDashboard({ files, setFiles }) {
 
         <div style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gridTemplateColumns: "repeat(5, 1fr)",
           gap: "14px"
         }}>
-          {[
-            {
-              title: "Purchase Request Form",
-              dept: "Finance",
-              desc: "Standard form for requesting procurement or purchases.",
-              file: "/templates/Chapter1-Municifix.docx"
-            },
-            {
-              title: "Abstract of Bids",
-              dept: "BAC",
-              desc: "Used to summarize and compare submitted bid offers.",
-              file: "/templates/Chapter1-Municifix.docx"
-            },
-            {
-              title: "Notice of Award",
-              dept: "BAC",
-              desc: "Official notice issued to the winning bidder.",
-              file: "/templates/Chapter1-Municifix.docx"
-            },
-            {
-              title: "Inspection & Acceptance Report",
-              dept: "Operations",
-              desc: "For inspection and acceptance of delivered goods.",
-              file: "/templates/Chapter1-Municifix.docx"
-            }
-          ].map((t, i) => (
-            <div key={i} style={{
-              border: "1px solid #ddd",
-              borderRadius: "6px",
-              padding: "14px",
-              background: "#fff"
-            }}>
-              <h5 style={{ margin: "0 0 4px 0", fontSize: "15px" }}>{t.title}</h5>
-              <p style={{ fontSize: "12px", fontWeight: 600, color: maroon }}>{t.dept}</p>
-              <p style={{ fontSize: "13px", color: "#555", marginBottom: "10px" }}>{t.desc}</p>
-
-              <a
-                href={t.file}
-                download
-                style={{
-                  display: "inline-block",
-                  padding: "6px 10px",
-                  background: maroon,
-                  color: "#fff",
-                  borderRadius: "4px",
-                  fontSize: "12px",
-                  textDecoration: "none"
-                }}
-              >
-                 Download Template
-              </a>
-            </div>
-          ))}
+          {docTemplates.length > 0 ? (
+            docTemplates.map((template) => (
+              <div key={template.id} style={{
+                border: "1px solid #ddd",
+                borderRadius: "6px",
+                padding: "14px",
+                background: "#fff"
+              }}>
+                <h5 style={{ margin: "0 0 4px 0", fontSize: "15px" }}>{template.name}</h5>
+                {template.description && (
+                  <p style={{ fontSize: "13px", color: "#555", marginBottom: "10px" }}>{template.description}</p>
+                )}
+                <button
+                  onClick={() => {
+                    const link = document.createElement("a");
+                    link.href = template.fileData;
+                    link.download = template.name;
+                    link.click();
+                  }}
+                  style={{
+                    display: "inline-block",
+                    padding: "6px 10px",
+                    background: maroon,
+                    color: "#fff",
+                    borderRadius: "4px",
+                    fontSize: "12px",
+                    border: "none",
+                    cursor: "pointer"
+                  }}
+                >
+                  Download Template
+                </button>
+              </div>
+            ))
+          ) : (
+            <p style={{ color: "#999", fontSize: "13px" }}>No templates available yet.</p>
+          )}
         </div>
       </div>
 
@@ -859,193 +887,143 @@ export default function UserDashboard({ files, setFiles }) {
               </p>
               
               <div style={styles.staffContainer}>
-                <div style={styles.staffMember}>
-                  <div style={styles.staffPlaceholder}>
-                    <span style={styles.staffInitial}>CB</span>
-                  </div>
-                  <h5 style={styles.staffName}>Dr. Cornelius Baker</h5>
-                  <p style={styles.staffPosition}>BAC Chairperson</p>
-                  <p style={styles.staffEmail}>c.baker@institution.edu</p>
-                </div>
-
-                <div style={styles.staffMember}>
-                  <div style={styles.staffPlaceholder}>
-                    <span style={styles.staffInitial}>ML</span>
-                  </div>
-                  <h5 style={styles.staffName}>Maria Lopez</h5>
-                  <p style={styles.staffPosition}>Vice Chairperson</p>
-                  <p style={styles.staffEmail}>m.lopez@institution.edu</p>
-                </div>
-
-                <div style={styles.staffMember}>
-                  <div style={styles.staffPlaceholder}>
-                    <span style={styles.staffInitial}>RC</span>
-                  </div>
-                  <h5 style={styles.staffName}>Robert Chen</h5>
-                  <p style={styles.staffPosition}>BAC Member - Finance</p>
-                  <p style={styles.staffEmail}>r.chen@institution.edu</p>
-                </div>
-
-                <div style={styles.staffMember}>
-                  <div style={styles.staffPlaceholder}>
-                    <span style={styles.staffInitial}>AJ</span>
-                  </div>
-                  <h5 style={styles.staffName}>Angela Johnson</h5>
-                  <p style={styles.staffPosition}>BAC Member - Administration</p>
-                  <p style={styles.staffEmail}>a.johnson@institution.edu</p>
-                </div>
-
-                <div style={styles.staffMember}>
-                  <div style={styles.staffPlaceholder}>
-                    <span style={styles.staffInitial}>PM</span>
-                  </div>
-                  <h5 style={styles.staffName}>Patricia Martinez</h5>
-                  <p style={styles.staffPosition}>BAC Member - Operations</p>
-                  <p style={styles.staffEmail}>p.martinez@institution.edu</p>
-                </div>
-
-                <div style={styles.staffMember}>
-                  <div style={styles.staffPlaceholder}>
-                    <span style={styles.staffInitial}>DK</span>
-                  </div>
-                  <h5 style={styles.staffName}>David Kim</h5>
-                  <p style={styles.staffPosition}>BAC Secretariat</p>
-                  <p style={styles.staffEmail}>d.kim@institution.edu</p>
-                </div>
+                {bacTeamMembers.length > 0 ? (
+                  bacTeamMembers.map((member) => (
+                    <div key={member.id} style={styles.staffMember}>
+                      {member.image ? (
+                        <img 
+                          src={member.image} 
+                          alt={member.name}
+                          style={styles.staffImage}
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextElementSibling.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div 
+                        style={styles.staffPlaceholder}
+                        id={`placeholder-${member.id}`}
+                        ref={(el) => {
+                          if (el && member.image) el.style.display = 'none';
+                        }}
+                      >
+                        <span style={styles.staffInitial}>
+                          {(member.name.charAt(0) + member.name.split(' ')[1]?.charAt(0) || member.name.charAt(1)).toUpperCase()}
+                        </span>
+                      </div>
+                      <h5 style={styles.staffName}>{member.name}</h5>
+                      <p style={styles.staffPosition}>{member.position}</p>
+                      <p style={styles.staffEmail}>{member.email}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p style={{ textAlign: "center", color: "#999", padding: "40px 20px" }}>
+                    No team members added yet. Admin can add team members from the Edit About BAC section.
+                  </p>
+                )}
               </div>
             </div>
 
             <div style={styles.card}>
-              <h4 style={styles.aboutTitle}>📋 Important Documents</h4>
-              <ul style={styles.guidelineList}>
-                <li>BAC Charter and By-Laws</li>
-                <li>Procurement Policy Manual</li>
-                <li>Bid Evaluation Criteria</li>
-                <li>Code of Ethics and Conduct</li>
-                <li>Conflict of Interest Policy</li>
-              </ul>
+              <h3>Development Team</h3>
+              <p style={styles.aboutText}>
+                Our talented developer who built and maintain this system to serve your needs.
+              </p>
+              
+              <div style={styles.staffContainer}>
+                <div style={styles.staffMember}>
+                  <div style={styles.staffPlaceholder}>
+                    <img 
+                      src={profileImage} 
+                      alt="Stephen Simoun Gee Bacani" 
+                      style={{ 
+                        width: "100%", 
+                        height: "100%", 
+                        borderRadius: "50%", 
+                        objectFit: "cover",
+                        display: "block"
+                      }} 
+                      onError={(e) => {
+                        e.target.style.display = "none";
+                        e.target.nextElementSibling.style.display = "flex";
+                      }}
+                    />
+                    <span style={{...styles.staffInitial, display: "none"}}>SGB</span>
+                  </div>
+                  <h5 style={styles.staffName}>Stephen Simoun Gee Bacani</h5>
+                  <p style={styles.staffPosition}>Full Stack Developer</p>
+                  <p style={styles.staffEmail}>bacanistephen1@gmail.com</p>
+                </div>
+              </div>
             </div>
           </>
         )}
 
-        {/* SETTINGS VIEW */}
-        {view === "settings" && (
+        {/* PPMP VIEW */}
+        {view === "ppmp" && (
           <>
             <div style={styles.card}>
-              <h3>Profile Settings</h3>
-              <div style={styles.settingsSection}>
-                <h4 style={styles.settingsTitle}>Personal Information</h4>
-                <div style={styles.profileInputGroup}>
-                  <div style={styles.inputWrapper}>
-                    <label style={styles.inputLabel}>First Name</label>
-                    <input
-                      type="text"
-                      value={profile.firstName}
-                      onChange={(e) => handleProfileChange("firstName", e.target.value)}
-                      placeholder="Enter your first name"
-                      style={styles.settingsInput}
-                    />
-                  </div>
-                  <div style={styles.inputWrapper}>
-                    <label style={styles.inputLabel}>Last Name</label>
-                    <input
-                      type="text"
-                      value={profile.lastName}
-                      onChange={(e) => handleProfileChange("lastName", e.target.value)}
-                      placeholder="Enter your last name"
-                      style={styles.settingsInput}
-                    />
-                  </div>
-                  <div style={styles.inputWrapper}>
-                    <label style={styles.inputLabel}>Middle Initial</label>
-                    <input
-                      type="text"
-                      value={profile.middleInitial}
-                      onChange={(e) => handleProfileChange("middleInitial", e.target.value.slice(0, 1))}
-                      placeholder="M"
-                      maxLength="1"
-                      style={styles.settingsInput}
-                    />
-                  </div>
-                </div>
-
-                <div style={styles.profileInputGroup}>
-                  <div style={styles.inputWrapper}>
-                    <label style={styles.inputLabel}>Email Address</label>
-                    <input
-                      type="email"
-                      value={profile.email}
-                      onChange={(e) => handleProfileChange("email", e.target.value)}
-                      placeholder="your.email@institution.edu"
-                      style={styles.settingsInput}
-                    />
-                  </div>
-                  <div style={styles.inputWrapper}>
-                    <label style={styles.inputLabel}>Department</label>
-                    <input
-                      type="text"
-                      value={profile.department}
-                      onChange={(e) => handleProfileChange("department", e.target.value)}
-                      placeholder="e.g. Finance, HR, Registrar"
-                      style={styles.settingsInput}
-                    />
-                  </div>
-                </div>
-
-                {profileMessage && (
-                  <div style={{...styles.messageBox, ...(profileMessage.includes("✓") ? styles.successMessage : styles.errorMessage)}}>
-                    {profileMessage}
-                  </div>
-                )}
-
-                <button style={styles.saveButton} onClick={saveProfile}>
-                  Save Profile
-                </button>
-              </div>
+              <h3>Project Procurement Management Plan (PPMP) Status</h3>
+              <p style={styles.cardDescription}>
+                PPMP verification status across all departments.
+              </p>
             </div>
 
-            <div style={styles.card}>
-              <h3>Security Settings</h3>
-              <div style={styles.settingsSection}>
-                <h4 style={styles.settingsTitle}>Change Password</h4>
-                <p style={styles.settingsDescription}>
-                  To keep your account secure, enter a strong password that you don't use elsewhere.
+            {ppmpDepartments.length > 0 && allUsers.length > 0 ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
+                {ppmpDepartments.map((dept) => (
+                  <div key={dept} style={{
+                    backgroundColor: "white",
+                    border: "1px solid #ddd",
+                    borderRadius: "8px",
+                    padding: "20px",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+                  }}>
+                    <div style={{ marginBottom: "15px" }}>
+                      <h4 style={{ margin: "0 0 10px 0", color: maroon, fontSize: "16px", fontWeight: "600" }}>
+                        {dept}
+                      </h4>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {allUsers.map((user, userIdx) => {
+                          const statusKey = `${user.email}_${dept}`;
+                          const status = userPPMPStatuses[statusKey] || "No PPMP";
+                          const statusColor = 
+                            status === "Complete" ? "#22c55e" :
+                            status === "Incomplete" ? "#f97316" :
+                            "#ef4444";
+
+                          return (
+                            <div key={userIdx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "13px" }}>
+                              <span style={{ color: "#555", fontWeight: "500" }}>{user.email}</span>
+                              <span style={{
+                                display: "inline-block",
+                                padding: "4px 10px",
+                                backgroundColor: statusColor,
+                                color: "white",
+                                borderRadius: "3px",
+                                fontSize: "11px",
+                                fontWeight: "600"
+                              }}>
+                                {status}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={styles.card}>
+                <p style={styles.emptyMessage}>
+                  {ppmpDepartments.length === 0 
+                    ? "No PPMP departments have been set up yet." 
+                    : "No users available."}
                 </p>
-
-                <div style={styles.passwordInputGroup}>
-                  <div style={styles.inputWrapper}>
-                    <label style={styles.inputLabel}>New Password</label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Minimum 8 characters"
-                      style={styles.settingsInput}
-                    />
-                  </div>
-                  <div style={styles.inputWrapper}>
-                    <label style={styles.inputLabel}>Confirm Password</label>
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter your password"
-                      style={styles.settingsInput}
-                    />
-                  </div>
-                </div>
-
-                {passwordMessage && (
-                  <div style={{...styles.messageBox, ...(passwordMessage.includes("✓") ? styles.successMessage : styles.errorMessage)}}>
-                    {passwordMessage}
-                  </div>
-                )}
-
-                <button style={styles.resetPasswordButton} onClick={handlePasswordChange}>
-                  Reset Password
-                </button>
               </div>
-            </div>
+            )}
           </>
         )}
 
@@ -1600,6 +1578,15 @@ const styles = {
     fontSize: 16,
   },
 
+  staffImage: {
+    width: 100,
+    height: 100,
+    borderRadius: "50%",
+    objectFit: "cover",
+    margin: "0 auto 16px",
+    display: "block",
+  },
+
   staffInitial: {
     fontSize: 32,
     fontWeight: "bold",
@@ -1972,5 +1959,61 @@ const styles = {
     fontSize: 14,
     marginBottom: 0,
     margin: 0,
+  },
+
+  ppmpContainer: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+    gap: 24,
+    marginBottom: 20,
+  },
+
+  ppmpCard: {
+    background: "white",
+    border: "1px solid #e5e7eb",
+    borderLeft: "5px solid #22c55e",
+    borderRadius: 12,
+    padding: 24,
+    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
+    transition: "all 0.3s ease",
+  },
+
+  ppmpHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    gap: 12,
+  },
+
+  ppmpDepartment: {
+    fontSize: 18,
+    fontWeight: 700,
+    color: maroon,
+    margin: 0,
+    flex: 1,
+  },
+
+  ppmpStatus: {
+    padding: "6px 14px",
+    borderRadius: 20,
+    fontSize: 13,
+    fontWeight: 600,
+    color: "white",
+    whiteSpace: "nowrap",
+  },
+
+  ppmpDescription: {
+    fontSize: 14,
+    color: "#555",
+    margin: 0,
+    lineHeight: 1.6,
+  },
+
+  cardDescription: {
+    fontSize: 15,
+    color: "#666",
+    margin: "12px 0 0 0",
+    lineHeight: 1.7,
   },
 };

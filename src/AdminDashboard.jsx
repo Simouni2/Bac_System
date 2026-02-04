@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 
 const maroon = "#7a0019";
+const PPMP_VERIFIER_EMAIL = "bacadmin@gmail.com";
 
 /* ===== DEPARTMENT NORMALIZATION ===== */
 const normalizeDepartment = (dept) => {
@@ -17,7 +18,12 @@ const normalizeDepartment = (dept) => {
 };
 
 export default function BACDashboard({ files, setFiles }) {
-  const [view, setView] = useState("dashboard"); // dashboard | archive | department
+  // Get current user from localStorage
+  const [currentUser] = useState(() => {
+    const saved = localStorage.getItem("currentUser");
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [view, setView] = useState("dashboard"); // dashboard | archive | department | ppmp
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -31,8 +37,52 @@ export default function BACDashboard({ files, setFiles }) {
   const [loadingMessage, setLoadingMessage] = useState("Processing...");
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  
+  // PPMP STATES
+  const [ppmpDepartments, setPpmpDepartments] = useState(() => {
+    const saved = localStorage.getItem("ppmpDepartments");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [newDepartmentName, setNewDepartmentName] = useState("");
+  const [allUsers, setAllUsers] = useState(() => {
+    const saved = localStorage.getItem("bacUsers");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [userPPMPStatuses, setUserPPMPStatuses] = useState(() => {
+    const saved = localStorage.getItem("userPPMPStatuses");
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [selectedUserEmail, setSelectedUserEmail] = useState("");
+  const [showPPMPUpdateModal, setShowPPMPUpdateModal] = useState(false);
+  const [ppmpUpdateDept, setPpmpUpdateDept] = useState("");
+  const [ppmpUpdateStatus, setPpmpUpdateStatus] = useState("No PPMP");
 
-  // ✅ ENSURE ALL FILES PERSIST TO GLOBAL STORAGE (metadata only)
+  // BAC TEAM MANAGEMENT STATES
+  const [bacTeamMembers, setBacTeamMembers] = useState(() => {
+    const saved = localStorage.getItem("bacTeamMembers");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showAddTeamMemberModal, setShowAddTeamMemberModal] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState(null);
+  const [teamMemberForm, setTeamMemberForm] = useState({
+    name: "",
+    position: "",
+    email: "",
+    image: ""
+  });
+
+  // DOCUMENT TEMPLATES STATES
+  const [docTemplates, setDocTemplates] = useState(() => {
+    const saved = localStorage.getItem("docTemplates");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showAddTemplateModal, setShowAddTemplateModal] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [templateForm, setTemplateForm] = useState({
+    name: "",
+    description: "",
+    fileData: ""
+  });
   useEffect(() => {
     try {
       const filesMetadata = files.map(file => {
@@ -41,10 +91,72 @@ export default function BACDashboard({ files, setFiles }) {
         return metadata;
       });
       localStorage.setItem("bacFiles", JSON.stringify(filesMetadata));
+      localStorage.setItem("bacFiles_backup", JSON.stringify(filesMetadata));
+      localStorage.setItem("bacFiles_lastUpdate", new Date().toISOString());
+      console.log("💾 Admin - Files synced to localStorage:", filesMetadata.length, "files");
     } catch (err) {
       console.warn("⚠️ localStorage quota exceeded:", err.message);
     }
   }, [files]);
+
+  // ✅ LOAD FILES FROM LOCALSTORAGE ON ADMIN MOUNT
+  useEffect(() => {
+    if (files.length === 0 && !localStorage.getItem("adminFilesLoaded")) {
+      try {
+        const savedFiles = localStorage.getItem("bacFiles");
+        if (savedFiles) {
+          const parsedFiles = JSON.parse(savedFiles);
+          if (parsedFiles.length > 0) {
+            setFiles(parsedFiles);
+            localStorage.setItem("adminFilesLoaded", "true");
+            console.log("✅ Admin - Files restored from localStorage:", parsedFiles.length, "files loaded");
+          }
+        }
+      } catch (err) {
+        console.warn("⚠️ Could not load files in admin:", err.message);
+      }
+    }
+  }, []);
+
+  // ✅ PERSIST PPMP DEPARTMENTS
+  useEffect(() => {
+    try {
+      localStorage.setItem("ppmpDepartments", JSON.stringify(ppmpDepartments));
+      console.log("💾 PPMP Departments saved:", ppmpDepartments.length);
+    } catch (err) {
+      console.warn("⚠️ Could not save PPMP departments:", err.message);
+    }
+  }, [ppmpDepartments]);
+
+  // ✅ PERSIST USER PPMP STATUSES
+  useEffect(() => {
+    try {
+      localStorage.setItem("userPPMPStatuses", JSON.stringify(userPPMPStatuses));
+      console.log("💾 User PPMP statuses saved");
+    } catch (err) {
+      console.warn("⚠️ Could not save PPMP statuses:", err.message);
+    }
+  }, [userPPMPStatuses]);
+
+  // ✅ PERSIST BAC TEAM MEMBERS
+  useEffect(() => {
+    try {
+      localStorage.setItem("bacTeamMembers", JSON.stringify(bacTeamMembers));
+      console.log("💾 BAC Team Members saved:", bacTeamMembers.length);
+    } catch (err) {
+      console.warn("⚠️ Could not save BAC team members:", err.message);
+    }
+  }, [bacTeamMembers]);
+
+  // ✅ PERSIST DOCUMENT TEMPLATES
+  useEffect(() => {
+    try {
+      localStorage.setItem("docTemplates", JSON.stringify(docTemplates));
+      console.log("💾 Document Templates saved:", docTemplates.length);
+    } catch (err) {
+      console.warn("⚠️ Could not save document templates:", err.message);
+    }
+  }, [docTemplates]);
 
   /* ===== UPDATE STATUS WITH LOADING ===== */
   const updateStatus = (index, status) => {
@@ -70,6 +182,116 @@ export default function BACDashboard({ files, setFiles }) {
   const handleViewFile = (file) => {
     setSelectedFile(file);
     setShowFileModal(true);
+  };
+
+  // ===== BAC TEAM MANAGEMENT FUNCTIONS =====
+  const handleSaveTeamMember = () => {
+    if (!teamMemberForm.name.trim() || !teamMemberForm.position.trim()) {
+      alert("Please fill in name and position");
+      return;
+    }
+
+    if (editingMemberId !== null) {
+      // Update existing member
+      const updated = bacTeamMembers.map(m => 
+        m.id === editingMemberId ? { ...teamMemberForm, id: editingMemberId } : m
+      );
+      setBacTeamMembers(updated);
+    } else {
+      // Add new member
+      const newMember = {
+        id: Date.now(),
+        ...teamMemberForm
+      };
+      setBacTeamMembers([...bacTeamMembers, newMember]);
+    }
+
+    setTeamMemberForm({ name: "", position: "", email: "", image: "" });
+    setEditingMemberId(null);
+    setShowAddTeamMemberModal(false);
+    setSuccessMessage(editingMemberId ? "Team member updated!" : "Team member added!");
+    setShowSuccessModal(true);
+  };
+
+  const handleEditTeamMember = (member) => {
+    setTeamMemberForm(member);
+    setEditingMemberId(member.id);
+    setShowAddTeamMemberModal(true);
+  };
+
+  const handleDeleteTeamMember = (id) => {
+    if (window.confirm("Are you sure you want to delete this team member?")) {
+      setBacTeamMembers(bacTeamMembers.filter(m => m.id !== id));
+      setSuccessMessage("Team member deleted!");
+      setShowSuccessModal(true);
+    }
+  };
+
+  // DOCUMENT TEMPLATE FUNCTIONS
+  const handleSaveTemplate = () => {
+    if (!templateForm.name.trim()) {
+      alert("Please enter a template name");
+      return;
+    }
+    if (!templateForm.fileData) {
+      alert("Please upload a file");
+      return;
+    }
+
+    if (editingTemplateId) {
+      // Edit existing template
+      setDocTemplates(docTemplates.map(t => t.id === editingTemplateId ? { ...templateForm, id: editingTemplateId } : t));
+      setSuccessMessage("Template updated successfully!");
+    } else {
+      // Add new template
+      const newTemplate = {
+        id: Date.now(),
+        ...templateForm
+      };
+      setDocTemplates([...docTemplates, newTemplate]);
+      setSuccessMessage("Template added successfully!");
+    }
+    
+    setShowAddTemplateModal(false);
+    setTemplateForm({ name: "", description: "", fileData: "" });
+    setEditingTemplateId(null);
+    setShowSuccessModal(true);
+  };
+
+  const handleEditTemplate = (template) => {
+    setTemplateForm(template);
+    setEditingTemplateId(template.id);
+    setShowAddTemplateModal(true);
+  };
+
+  const handleDeleteTemplate = (id) => {
+    if (window.confirm("Are you sure you want to delete this template?")) {
+      setDocTemplates(docTemplates.filter(t => t.id !== id));
+      setSuccessMessage("Template deleted!");
+      setShowSuccessModal(true);
+    }
+  };
+
+  const handleTemplateFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setTemplateForm({ ...templateForm, fileData: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setTeamMemberForm({ ...teamMemberForm, image: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const downloadFile = (file) => {
@@ -186,6 +408,13 @@ export default function BACDashboard({ files, setFiles }) {
         </div>
 
         <nav>
+          <div
+            style={view === "analytics" ? styles.navActive : styles.nav}
+            onClick={() => setView("analytics")}
+          >
+             Analytics
+          </div>
+
 <div
   style={view === "dashboard" ? styles.navActive : styles.nav}
   onClick={() => setView("dashboard")}
@@ -213,6 +442,27 @@ export default function BACDashboard({ files, setFiles }) {
           >
             By Department
           </div>
+
+          <div
+            style={view === "ppmp" ? styles.navActive : styles.nav}
+            onClick={() => setView("ppmp")}
+          >
+             PPMP Management
+          </div>
+
+          <div
+            style={view === "editAboutBac" ? styles.navActive : styles.nav}
+            onClick={() => setView("editAboutBac")}
+          >
+            Edit About BAC
+          </div>
+
+          <div
+            style={view === "editDocTemplates" ? styles.navActive : styles.nav}
+            onClick={() => setView("editDocTemplates")}
+          >
+            Edit Documents Template
+          </div>
         </nav>
       </aside>
 
@@ -225,6 +475,14 @@ export default function BACDashboard({ files, setFiles }) {
               ? "Archived Documents"
               : view === "department"
               ? "Files by Department"
+              : view === "ppmp"
+              ? "PPMP Management"
+              : view === "editAboutBac"
+              ? "Edit About BAC"
+              : view === "editDocTemplates"
+              ? "Edit Documents Template"
+              : view === "analytics"
+              ? "Analytics & Reports"
               : "File Compilation Dashboard"}
           </h2>
           <span style={styles.schoolYear}>School Year 2025–2026</span>
@@ -240,7 +498,8 @@ export default function BACDashboard({ files, setFiles }) {
           </div>
         )}
 
-        {/* FILTER BAR */}
+        {/* FILTER BAR - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, or Analytics view */}
+        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "analytics" && (
         <div style={styles.filterBar}>
           <input
             style={styles.input}
@@ -291,8 +550,10 @@ export default function BACDashboard({ files, setFiles }) {
             Reset
           </button>
         </div>
+        )}
 
-        {/* TABLE */}
+        {/* TABLE - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, or Analytics view */}
+        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "analytics" && (
         <div style={styles.tableBox}>
           <table style={styles.table}>
             <thead>
@@ -414,6 +675,7 @@ export default function BACDashboard({ files, setFiles }) {
             </tbody>
           </table>
         </div>
+        )}
 
         {/* DEPARTMENT VIEW */}
         {view === "department" && (
@@ -512,13 +774,206 @@ export default function BACDashboard({ files, setFiles }) {
                     </div>
                   )}
 
-                  {deptFiles.length === 0 && (
-                    <p style={styles.noDeptFiles}>No files for this department yet.</p>
-                  )}
+
                 </div>
               );
             })}
           </div>
+        )}
+
+        {/* PPMP MANAGEMENT VIEW */}
+        {view === "ppmp" && (
+          <>
+            {/* ADD NEW DEPARTMENT SECTION - Only show if current user is the PPMP verifier */}
+            {currentUser?.email === PPMP_VERIFIER_EMAIL && (
+            <div style={styles.card}>
+              <h3>Add PPMP Department</h3>
+              <p style={styles.cardDescription}>
+                Create new PPMP departments that users can track in their PPMP Status page.
+              </p>
+              <div style={styles.ppmpInputContainer}>
+                <input
+                  type="text"
+                  placeholder="Enter department name (e.g., Finance, HR, Registrar)"
+                  value={newDepartmentName}
+                  onChange={(e) => setNewDepartmentName(e.target.value)}
+                  style={styles.ppmpInput}
+                />
+                <button
+                  style={styles.ppmpAddButton}
+                  onClick={() => {
+                    if (newDepartmentName.trim()) {
+                      const normalized = newDepartmentName.charAt(0).toUpperCase() + newDepartmentName.slice(1).toLowerCase();
+                      if (!ppmpDepartments.includes(normalized)) {
+                        const updated = [...ppmpDepartments, normalized];
+                        setPpmpDepartments(updated);
+                        localStorage.setItem("ppmpDepartments", JSON.stringify(updated));
+                        
+                        // Update all existing users with this department
+                        const updatedStatuses = { ...userPPMPStatuses };
+                        setNewDepartmentName("");
+                        setShowSuccessModal(true);
+                        setSuccessMessage(`Department "${normalized}" has been added successfully!`);
+                      } else {
+                        alert("This department already exists!");
+                      }
+                    }
+                  }}
+                >
+                  + Add Department
+                </button>
+              </div>
+            </div>
+            )}
+
+            {/* EXISTING DEPARTMENTS LIST */}
+            {currentUser?.email === PPMP_VERIFIER_EMAIL && ppmpDepartments.length > 0 && (
+              <div style={styles.card}>
+                <h3>Active PPMP Departments</h3>
+                <div style={styles.ppmpDeptGrid}>
+                  {ppmpDepartments.map((dept) => (
+                    <div key={dept} style={styles.ppmpDeptTag}>
+                      <span>{dept}</span>
+                      <button
+                        style={styles.ppmpRemoveBtn}
+                        onClick={() => {
+                          const updated = ppmpDepartments.filter(d => d !== dept);
+                          setPpmpDepartments(updated);
+                          localStorage.setItem("ppmpDepartments", JSON.stringify(updated));
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ADMIN PPMP VERIFICATION SECTION - Only for admin */}
+            {currentUser?.email === PPMP_VERIFIER_EMAIL && (
+            <div style={styles.card}>
+              <h3>Verify User PPMP Status</h3>
+              <p style={styles.cardDescription}>
+                Select a user and update their PPMP status for each department.
+              </p>
+
+              <select
+                style={styles.ppmpInput}
+                value={selectedUserEmail}
+                onChange={(e) => {
+                  setSelectedUserEmail(e.target.value);
+                  setPpmpUpdateDept("");
+                  setPpmpUpdateStatus("No PPMP");
+                }}
+              >
+                <option value="">-- Select a user --</option>
+                {allUsers.map((user, idx) => (
+                  <option key={idx} value={user.email}>{user.email}</option>
+                ))}
+              </select>
+
+              {selectedUserEmail && (
+                <div style={{ marginTop: "15px", padding: "10px", backgroundColor: "#f0f8ff", borderRadius: "5px", fontSize: "12px", color: "#666" }}>
+                  <strong>Verified by:</strong> {currentUser?.email || "Unknown Admin"}
+                </div>
+              )}
+
+              {selectedUserEmail && ppmpDepartments.length > 0 && (
+                <>
+                  <div style={styles.ppmpStatusGrid}>
+                    {ppmpDepartments.map((dept) => {
+                      const userKey = selectedUserEmail;
+                      const statusKey = `${userKey}_${dept}`;
+                      const currentStatus = userPPMPStatuses[statusKey] || "No PPMP";
+
+                      return (
+                        <div key={dept} style={styles.ppmpStatusCard}>
+                          <div style={styles.ppmpStatusHeader}>
+                            <h4 style={styles.ppmpStatusDept}>{dept}</h4>
+                            <span
+                              style={{
+                                ...styles.ppmpStatusBadge,
+                                backgroundColor:
+                                  currentStatus === "Complete"
+                                    ? "#22c55e"
+                                    : currentStatus === "Incomplete"
+                                    ? "#f97316"
+                                    : "#ef4444"
+                              }}
+                            >
+                              {currentStatus}
+                            </span>
+                          </div>
+                          <div style={styles.ppmpStatusButtons}>
+                            <button
+                              style={{
+                                ...styles.ppmpStatusBtn,
+                                ...(currentStatus === "Complete" ? styles.ppmpStatusBtnActive : {})
+                              }}
+                              onClick={() => {
+                                const statusKey = `${selectedUserEmail}_${dept}`;
+                                const updated = { ...userPPMPStatuses, [statusKey]: "Complete" };
+                                setUserPPMPStatuses(updated);
+                                localStorage.setItem("userPPMPStatuses", JSON.stringify(updated));
+                                
+                                // Also update user's local PPMP
+                                let userPPMP = JSON.parse(localStorage.getItem(`userPPMP_${selectedUserEmail}`) || "{}");
+                                userPPMP[dept] = "Complete";
+                                localStorage.setItem(`userPPMP_${selectedUserEmail}`, JSON.stringify(userPPMP));
+                              }}
+                            >
+                              Complete
+                            </button>
+                            <button
+                              style={{
+                                ...styles.ppmpStatusBtn,
+                                ...(currentStatus === "Incomplete" ? styles.ppmpStatusBtnActive : {})
+                              }}
+                              onClick={() => {
+                                const statusKey = `${selectedUserEmail}_${dept}`;
+                                const updated = { ...userPPMPStatuses, [statusKey]: "Incomplete" };
+                                setUserPPMPStatuses(updated);
+                                localStorage.setItem("userPPMPStatuses", JSON.stringify(updated));
+                                
+                                // Also update user's local PPMP
+                                let userPPMP = JSON.parse(localStorage.getItem(`userPPMP_${selectedUserEmail}`) || "{}");
+                                userPPMP[dept] = "Incomplete";
+                                localStorage.setItem(`userPPMP_${selectedUserEmail}`, JSON.stringify(userPPMP));
+                              }}
+                            >
+                              Incomplete
+                            </button>
+                            <button
+                              style={{
+                                ...styles.ppmpStatusBtn,
+                                ...(currentStatus === "No PPMP" ? styles.ppmpStatusBtnActive : {})
+                              }}
+                              onClick={() => {
+                                const statusKey = `${selectedUserEmail}_${dept}`;
+                                const updated = { ...userPPMPStatuses, [statusKey]: "No PPMP" };
+                                setUserPPMPStatuses(updated);
+                                localStorage.setItem("userPPMPStatuses", JSON.stringify(updated));
+                                
+                                // Also update user's local PPMP
+                                let userPPMP = JSON.parse(localStorage.getItem(`userPPMP_${selectedUserEmail}`) || "{}");
+                                userPPMP[dept] = "No PPMP";
+                                localStorage.setItem(`userPPMP_${selectedUserEmail}`, JSON.stringify(userPPMP));
+                              }}
+                            >
+                              No PPMP
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+            )}
+
+          </>
         )}
 
         {/* DECLINE MODAL */}
@@ -554,6 +1009,380 @@ export default function BACDashboard({ files, setFiles }) {
               </div>
             </div>
           </div>
+        )}
+
+        {/* EDIT ABOUT BAC VIEW */}
+        {view === "editAboutBac" && (
+          <>
+            <div style={styles.card}>
+              <h3>Edit BAC Leadership Team</h3>
+              <p style={styles.cardDescription}>
+                Manage BAC team members: add, edit, or remove members with their names, positions, and profile images.
+              </p>
+              <button
+                style={styles.button}
+                onClick={() => {
+                  setTeamMemberForm({ name: "", position: "", email: "", image: "" });
+                  setEditingMemberId(null);
+                  setShowAddTeamMemberModal(true);
+                }}
+              >
+                + Add Team Member
+              </button>
+            </div>
+
+            {bacTeamMembers.length > 0 && (
+              <div style={styles.card}>
+                <h3>Current Team Members</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: "20px" }}>
+                  {bacTeamMembers.map((member) => (
+                    <div key={member.id} style={{
+                      border: "1px solid #ddd",
+                      borderRadius: "8px",
+                      padding: "15px",
+                      textAlign: "center"
+                    }}>
+                      {member.image && (
+                        <img
+                          src={member.image}
+                          alt={member.name}
+                          style={{
+                            width: "100px",
+                            height: "100px",
+                            borderRadius: "50%",
+                            objectFit: "cover",
+                            marginBottom: "10px"
+                          }}
+                        />
+                      )}
+                      <h4 style={{ margin: "10px 0", color: maroon }}>{member.name}</h4>
+                      <p style={{ margin: "5px 0", fontSize: "12px", color: "#666" }}>{member.position}</p>
+                      {member.email && <p style={{ margin: "5px 0", fontSize: "11px", color: "#999" }}>{member.email}</p>}
+                      <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
+                        <button
+                          style={{...styles.button, flex: 1, padding: "8px"}}
+                          onClick={() => handleEditTeamMember(member)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          style={{...styles.declineButtonSmall, flex: 1, padding: "8px"}}
+                          onClick={() => handleDeleteTeamMember(member.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* EDIT DOCUMENTS TEMPLATE VIEW */}
+        {view === "editDocTemplates" && (
+          <>
+            <div style={styles.card}>
+              <h3>Edit Document Templates</h3>
+              <p style={styles.cardDescription}>
+                Upload templates that will be displayed in the user's guidelines section. Users can download these templates for reference.
+              </p>
+              <button
+                style={styles.button}
+                onClick={() => {
+                  setTemplateForm({ name: "", description: "", fileData: "" });
+                  setEditingTemplateId(null);
+                  setShowAddTemplateModal(true);
+                }}
+              >
+                + Add Template
+              </button>
+            </div>
+
+            {docTemplates.length > 0 && (
+              <div style={styles.card}>
+                <h3>Current Templates</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
+                  {docTemplates.map((template) => (
+                    <div key={template.id} style={{
+                      border: "1px solid #ddd",
+                      borderRadius: "8px",
+                      padding: "15px",
+                      backgroundColor: "#f9f9f9"
+                    }}>
+                      <h4 style={{ margin: "0 0 8px 0", color: maroon }}>{template.name}</h4>
+                      {template.description && (
+                        <p style={{ margin: "0 0 10px 0", fontSize: "13px", color: "#666" }}>{template.description}</p>
+                      )}
+                      <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#999" }}>
+                        📄 File uploaded
+                      </p>
+                      <div style={{ display: "flex", gap: "10px" }}>
+                        <button
+                          style={{...styles.button, flex: 1, padding: "8px", fontSize: "13px"}}
+                          onClick={() => handleEditTemplate(template)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          style={{...styles.declineButtonSmall, flex: 1, padding: "8px", fontSize: "13px"}}
+                          onClick={() => handleDeleteTemplate(template.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {docTemplates.length === 0 && (
+              <div style={styles.card}>
+                <p style={{ textAlign: "center", color: "#999" }}>No templates added yet. Click "+ Add Template" to get started.</p>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ANALYTICS VIEW */}
+        {view === "analytics" && (
+          <>
+            <div style={styles.card}>
+              <h3>User Submissions Analytics</h3>
+              <p style={styles.cardDescription}>
+                Overview of file submissions and PPMP status by department
+              </p>
+            </div>
+
+            {/* ANALYTICS GRID */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: "20px" }}>
+              {/* SUBMISSIONS BY DEPARTMENT - PIE CHART DATA */}
+              <div style={styles.card}>
+                <h4 style={{ marginTop: 0 }}> Submissions by Department</h4>
+                <div style={{ minHeight: "300px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {(() => {
+                    const deptStats = {};
+                    files.forEach(f => {
+                      const dept = normalizeDepartment(f.department) || "Other";
+                      deptStats[dept] = (deptStats[dept] || 0) + 1;
+                    });
+                    
+                    const total = Object.values(deptStats).reduce((a, b) => a + b, 0);
+                    
+                    return Object.entries(deptStats).length === 0 ? (
+                      <p style={{ color: "#999", textAlign: "center" }}>No submissions yet</p>
+                    ) : (
+                      <>
+                        {Object.entries(deptStats).map(([dept, count]) => {
+                          const percentage = ((count / total) * 100).toFixed(1);
+                          return (
+                            <div key={dept} style={{ marginBottom: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                <span style={{ fontWeight: "500", color: "#333" }}>{dept}</span>
+                                <span style={{ color: maroon, fontWeight: "600" }}>{count} ({percentage}%)</span>
+                              </div>
+                              <div style={{ width: "100%", height: "20px", backgroundColor: "#e0e0e0", borderRadius: "10px", overflow: "hidden" }}>
+                                <div style={{
+                                  width: `${percentage}%`,
+                                  height: "100%",
+                                  backgroundColor: maroon,
+                                  transition: "width 0.3s ease"
+                                }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div style={{ marginTop: "15px", padding: "10px", backgroundColor: "#f5f5f5", borderRadius: "5px", textAlign: "center" }}>
+                          <p style={{ margin: 0, fontSize: "13px", color: "#666" }}>
+                            <strong>Total Submissions:</strong> {total}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* FILE STATUS DISTRIBUTION */}
+              <div style={styles.card}>
+                <h4 style={{ marginTop: 0 }}> File Status Distribution</h4>
+                <div style={{ minHeight: "300px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {(() => {
+                    const statusStats = {
+                      "Pending": files.filter(f => f.status === "Pending" && !f.isArchived).length,
+                      "Approved": files.filter(f => f.status === "Approved" && !f.isArchived).length,
+                      "Declined": files.filter(f => f.status === "Declined" && !f.isArchived).length,
+                      "Archived": files.filter(f => f.isArchived).length
+                    };
+                    
+                    const total = Object.values(statusStats).reduce((a, b) => a + b, 0);
+                    const statusColors = {
+                      "Pending": "#f59e0b",
+                      "Approved": "#10b981",
+                      "Declined": "#ef4444",
+                      "Archived": "#6b7280"
+                    };
+                    
+                    return total === 0 ? (
+                      <p style={{ color: "#999", textAlign: "center" }}>No files yet</p>
+                    ) : (
+                      <>
+                        {Object.entries(statusStats).map(([status, count]) => {
+                          const percentage = ((count / total) * 100).toFixed(1);
+                          return (
+                            <div key={status} style={{ marginBottom: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                <span style={{ fontWeight: "500", color: "#333" }}>{status}</span>
+                                <span style={{ color: statusColors[status], fontWeight: "600" }}>{count} ({percentage}%)</span>
+                              </div>
+                              <div style={{ width: "100%", height: "20px", backgroundColor: "#e0e0e0", borderRadius: "10px", overflow: "hidden" }}>
+                                <div style={{
+                                  width: `${percentage}%`,
+                                  height: "100%",
+                                  backgroundColor: statusColors[status],
+                                  transition: "width 0.3s ease"
+                                }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div style={{ marginTop: "15px", padding: "10px", backgroundColor: "#f5f5f5", borderRadius: "5px", textAlign: "center" }}>
+                          <p style={{ margin: 0, fontSize: "13px", color: "#666" }}>
+                            <strong>Total Files:</strong> {total}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* PPMP STATUS OVERVIEW */}
+              <div style={styles.card}>
+                <h4 style={{ marginTop: 0 }}>PPMP Status Summary</h4>
+                <div style={{ minHeight: "300px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {(() => {
+                    const ppmpStats = {
+                      "Complete": 0,
+                      "Incomplete": 0,
+                      "No PPMP": 0
+                    };
+                    
+                    Object.values(userPPMPStatuses).forEach(status => {
+                      if (ppmpStats.hasOwnProperty(status)) {
+                        ppmpStats[status]++;
+                      }
+                    });
+                    
+                    const total = Object.values(ppmpStats).reduce((a, b) => a + b, 0);
+                    const ppmpColors = {
+                      "Complete": "#10b981",
+                      "Incomplete": "#f59e0b",
+                      "No PPMP": "#ef4444"
+                    };
+                    
+                    return total === 0 ? (
+                      <p style={{ color: "#999", textAlign: "center" }}>No PPMP data yet</p>
+                    ) : (
+                      <>
+                        {Object.entries(ppmpStats).map(([status, count]) => {
+                          const percentage = ((count / total) * 100).toFixed(1);
+                          return (
+                            <div key={status} style={{ marginBottom: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                <span style={{ fontWeight: "500", color: "#333" }}>{status}</span>
+                                <span style={{ color: ppmpColors[status], fontWeight: "600" }}>{count} ({percentage}%)</span>
+                              </div>
+                              <div style={{ width: "100%", height: "20px", backgroundColor: "#e0e0e0", borderRadius: "10px", overflow: "hidden" }}>
+                                <div style={{
+                                  width: `${percentage}%`,
+                                  height: "100%",
+                                  backgroundColor: ppmpColors[status],
+                                  transition: "width 0.3s ease"
+                                }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div style={{ marginTop: "15px", padding: "10px", backgroundColor: "#f5f5f5", borderRadius: "5px", textAlign: "center" }}>
+                          <p style={{ margin: 0, fontSize: "13px", color: "#666" }}>
+                            <strong>Total PPMP Records:</strong> {total}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+
+            {/* DETAILED STATS TABLE */}
+            <div style={styles.card}>
+              <h4>Department Statistics</h4>
+              <div style={{ overflowX: "auto" }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Department</th>
+                      <th>Total Files</th>
+                      <th>Pending</th>
+                      <th>Approved</th>
+                      <th>Declined</th>
+                      <th>Approval Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const deptData = {};
+                      files.forEach(f => {
+                        const dept = normalizeDepartment(f.department) || "Other";
+                        if (!deptData[dept]) {
+                          deptData[dept] = { total: 0, pending: 0, approved: 0, declined: 0 };
+                        }
+                        deptData[dept].total++;
+                        if (f.status === "Pending" && !f.isArchived) deptData[dept].pending++;
+                        if (f.status === "Approved" && !f.isArchived) deptData[dept].approved++;
+                        if (f.status === "Declined" && !f.isArchived) deptData[dept].declined++;
+                      });
+                      
+                      return Object.keys(deptData).length === 0 ? (
+                        <tr><td colSpan="6" style={{ textAlign: "center", color: "#999" }}>No data available</td></tr>
+                      ) : (
+                        Object.entries(deptData).map(([dept, stats]) => {
+                          const approvalRate = stats.total > 0 
+                            ? ((stats.approved / (stats.approved + stats.declined)) * 100).toFixed(1)
+                            : "N/A";
+                          return (
+                            <tr key={dept}>
+                              <td><strong>{dept}</strong></td>
+                              <td style={{ textAlign: "center", color: maroon, fontWeight: "600" }}>{stats.total}</td>
+                              <td style={{ textAlign: "center", color: "#f59e0b", fontWeight: "600" }}>{stats.pending}</td>
+                              <td style={{ textAlign: "center", color: "#10b981", fontWeight: "600" }}>{stats.approved}</td>
+                              <td style={{ textAlign: "center", color: "#ef4444", fontWeight: "600" }}>{stats.declined}</td>
+                              <td style={{ textAlign: "center" }}>
+                                <span style={{
+                                  display: "inline-block",
+                                  padding: "4px 10px",
+                                  backgroundColor: approvalRate === "N/A" ? "#e0e0e0" : approvalRate > 70 ? "#d1fae5" : "#fef3c7",
+                                  borderRadius: "4px",
+                                  color: approvalRate > 70 ? "#065f46" : "#92400e",
+                                  fontWeight: "600"
+                                }}>
+                                  {approvalRate}%
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
 
         {/* FILE VIEW MODAL */}
@@ -605,6 +1434,158 @@ export default function BACDashboard({ files, setFiles }) {
                   onClick={() => setShowFileModal(false)}
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ADD/EDIT TEAM MEMBER MODAL */}
+        {showAddTeamMemberModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.modal}>
+              <h3 style={styles.modalTitle}>{editingMemberId ? "Edit Team Member" : "Add Team Member"}</h3>
+              
+              <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Full Name *</label>
+                  <input
+                    type="text"
+                    value={teamMemberForm.name}
+                    onChange={(e) => setTeamMemberForm({ ...teamMemberForm, name: e.target.value })}
+                    placeholder="Enter full name"
+                    style={styles.input}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Position *</label>
+                  <input
+                    type="text"
+                    value={teamMemberForm.position}
+                    onChange={(e) => setTeamMemberForm({ ...teamMemberForm, position: e.target.value })}
+                    placeholder="e.g., BAC Chairperson"
+                    style={styles.input}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Email</label>
+                  <input
+                    type="email"
+                    value={teamMemberForm.email}
+                    onChange={(e) => setTeamMemberForm({ ...teamMemberForm, email: e.target.value })}
+                    placeholder="Enter email (optional)"
+                    style={styles.input}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Profile Image</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    style={styles.input}
+                  />
+                  {teamMemberForm.image && (
+                    <img
+                      src={teamMemberForm.image}
+                      alt="Preview"
+                      style={{
+                        width: "80px",
+                        height: "80px",
+                        borderRadius: "50%",
+                        objectFit: "cover",
+                        marginTop: "10px"
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div style={styles.modalButtons}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowAddTeamMemberModal(false);
+                    setEditingMemberId(null);
+                    setTeamMemberForm({ name: "", position: "", email: "", image: "" });
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={styles.confirmButton}
+                  onClick={handleSaveTeamMember}
+                >
+                  {editingMemberId ? "Update Member" : "Add Member"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ADD/EDIT TEMPLATE MODAL */}
+        {showAddTemplateModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.modal}>
+              <h3 style={styles.modalTitle}>{editingTemplateId ? "Edit Template" : "Add Template"}</h3>
+              
+              <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Template Name *</label>
+                  <input
+                    type="text"
+                    value={templateForm.name}
+                    onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+                    placeholder="e.g., Bid Evaluation Form"
+                    style={styles.input}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Description</label>
+                  <textarea
+                    value={templateForm.description}
+                    onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
+                    placeholder="Brief description of the template (optional)"
+                    style={{...styles.input, minHeight: "80px", resize: "vertical"}}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Upload File *</label>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.xlsx,.xls,.ppt,.pptx"
+                    onChange={handleTemplateFileUpload}
+                    style={styles.input}
+                  />
+                  {templateForm.fileData && (
+                    <p style={{ margin: "10px 0 0 0", fontSize: "12px", color: "#22c55e", fontWeight: "500" }}>
+                      ✓ File uploaded
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div style={styles.modalButtons}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowAddTemplateModal(false);
+                    setEditingTemplateId(null);
+                    setTemplateForm({ name: "", description: "", fileData: "" });
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={styles.confirmButton}
+                  onClick={handleSaveTemplate}
+                >
+                  {editingTemplateId ? "Update Template" : "Add Template"}
                 </button>
               </div>
             </div>
@@ -1178,6 +2159,141 @@ navActive: {
     cursor: "pointer",
     fontWeight: 600,
     fontSize: 14,
+  },
+
+  /* ===== PPMP STYLES ===== */
+  ppmpInputContainer: {
+    display: "flex",
+    gap: 12,
+    marginTop: 16,
+  },
+
+  ppmpInput: {
+    flex: 1,
+    padding: "12px 16px",
+    border: "1px solid #ddd",
+    borderRadius: 8,
+    fontSize: 14,
+    fontFamily: "Segoe UI",
+  },
+
+  ppmpAddButton: {
+    background: maroon,
+    color: "white",
+    padding: "12px 24px",
+    borderRadius: 8,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 14,
+    whiteSpace: "nowrap",
+  },
+
+  ppmpDeptGrid: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 12,
+    marginTop: 16,
+  },
+
+  ppmpDeptTag: {
+    background: "#f0f0f0",
+    border: `2px solid ${maroon}`,
+    padding: "8px 12px",
+    borderRadius: 20,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontSize: 14,
+    fontWeight: 600,
+    color: maroon,
+  },
+
+  ppmpRemoveBtn: {
+    background: "transparent",
+    border: "none",
+    color: maroon,
+    cursor: "pointer",
+    fontSize: 16,
+    fontWeight: "bold",
+    padding: 0,
+  },
+
+  ppmpStatusGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+    gap: 16,
+    marginTop: 20,
+  },
+
+  ppmpStatusCard: {
+    background: "#f9f9f9",
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    padding: 16,
+  },
+
+  ppmpStatusHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottom: "1px solid #e5e7eb",
+  },
+
+  ppmpStatusDept: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: maroon,
+    margin: 0,
+  },
+
+  ppmpStatusBadge: {
+    padding: "4px 12px",
+    borderRadius: 12,
+    fontSize: 12,
+    fontWeight: 600,
+    color: "white",
+  },
+
+  ppmpStatusButtons: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 1fr",
+    gap: 8,
+  },
+
+  ppmpStatusBtn: {
+    padding: "8px 12px",
+    borderRadius: 6,
+    border: "1px solid #ddd",
+    background: "white",
+    color: "#333",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 12,
+    transition: "all 0.2s",
+  },
+
+  ppmpStatusBtnActive: {
+    background: maroon,
+    color: "white",
+    border: `1px solid ${maroon}`,
+  },
+
+  cardDescription: {
+    fontSize: 14,
+    color: "#666",
+    margin: "12px 0 0 0",
+    lineHeight: 1.6,
+  },
+
+  emptyMessage: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    padding: "20px 0",
+    fontStyle: "italic",
   },
 
 };
