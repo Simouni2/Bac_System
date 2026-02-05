@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
+import { adminCreateUser } from "./firebase/authService";
+import { createUserDocument, saveAccountRequest, getAllAccountRequests, updateAccountRequestStatus, getAllCreatedAccounts } from "./firebase/userService";
 
 const maroon = "#7a0019";
 const PPMP_VERIFIER_EMAIL = "bacadmin@gmail.com";
@@ -83,6 +85,43 @@ export default function BACDashboard({ files, setFiles }) {
     description: "",
     fileData: ""
   });
+
+  // ACCOUNT CREATION STATES
+  const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
+  const [createdAccounts, setCreatedAccounts] = useState([]);
+  const [accountForm, setAccountForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+    role: "user"
+  });
+  const [accountError, setAccountError] = useState("");
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountRequests, setAccountRequests] = useState(() => {
+    const saved = localStorage.getItem("accountRequests");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [selectedRequestId, setSelectedRequestId] = useState(null);
+  const [isLoadingFromFirestore, setIsLoadingFromFirestore] = useState(false);
+  const [showRejectConfirmModal, setShowRejectConfirmModal] = useState(false);
+  const [requestToReject, setRequestToReject] = useState(null);
+  
+  // Delete confirmation modals
+  const [showDeleteTeamMemberModal, setShowDeleteTeamMemberModal] = useState(false);
+  const [teamMemberToDelete, setTeamMemberToDelete] = useState(null);
+  const [showDeleteTemplateModal, setShowDeleteTemplateModal] = useState(false);
+  const [templateToDelete, setTemplateToDelete] = useState(null);
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [accountToDelete, setAccountToDelete] = useState(null);
+
+  // ✅ DEBUG: Log when files prop changes
+  useEffect(() => {
+    console.log("📊 Admin - Files prop updated:", files?.length || 0, "files", files);
+  }, [files]);
+
+  // ✅ SYNC FILES TO LOCALSTORAGE ONLY (Firestore is the single source of truth)
   useEffect(() => {
     try {
       const filesMetadata = files.map(file => {
@@ -90,32 +129,62 @@ export default function BACDashboard({ files, setFiles }) {
         const { fileData, ...metadata } = file;
         return metadata;
       });
+      // Save to localStorage as backup
       localStorage.setItem("bacFiles", JSON.stringify(filesMetadata));
       localStorage.setItem("bacFiles_backup", JSON.stringify(filesMetadata));
       localStorage.setItem("bacFiles_lastUpdate", new Date().toISOString());
       console.log("💾 Admin - Files synced to localStorage:", filesMetadata.length, "files");
     } catch (err) {
-      console.warn("⚠️ localStorage quota exceeded:", err.message);
+      console.warn("⚠️ Error syncing files:", err.message);
     }
   }, [files]);
 
-  // ✅ LOAD FILES FROM LOCALSTORAGE ON ADMIN MOUNT
+  // ✅ LOAD ACCOUNT REQUESTS FROM FIRESTORE ON ADMIN MOUNT
   useEffect(() => {
-    if (files.length === 0 && !localStorage.getItem("adminFilesLoaded")) {
+    const loadAccountRequestsFromFirestore = async () => {
       try {
-        const savedFiles = localStorage.getItem("bacFiles");
-        if (savedFiles) {
-          const parsedFiles = JSON.parse(savedFiles);
-          if (parsedFiles.length > 0) {
-            setFiles(parsedFiles);
-            localStorage.setItem("adminFilesLoaded", "true");
-            console.log("✅ Admin - Files restored from localStorage:", parsedFiles.length, "files loaded");
-          }
+        const result = await getAllAccountRequests();
+        if (result.success) {
+          setAccountRequests(result.data);
+          localStorage.setItem("accountRequests", JSON.stringify(result.data));
+          console.log("✅ Admin - Account requests loaded from Firestore:", result.data.length);
+        } else {
+          console.log("⚠️ No account requests in Firestore");
+          setAccountRequests([]);
         }
       } catch (err) {
-        console.warn("⚠️ Could not load files in admin:", err.message);
+        console.warn("⚠️ Could not load account requests from Firestore:", err.message);
       }
-    }
+    };
+    
+    loadAccountRequestsFromFirestore();
+  }, []);
+
+  // ✅ LOAD CREATED ACCOUNTS FROM FIRESTORE ON ADMIN MOUNT
+  useEffect(() => {
+    const loadCreatedAccountsFromFirestore = async () => {
+      try {
+        const result = await getAllCreatedAccounts();
+        if (result.success && result.data.length > 0) {
+          const formattedAccounts = result.data.map(account => ({
+            id: account.uid || account.id,
+            firstName: account.firstName || "",
+            lastName: account.lastName || "",
+            email: account.email || "",
+            role: account.role || "user",
+            createdBy: account.createdBy || "admin",
+            createdDate: account.createdAt || new Date().toISOString()
+          }));
+          setCreatedAccounts(formattedAccounts);
+          localStorage.setItem("createdAccounts", JSON.stringify(formattedAccounts));
+          console.log("✅ Admin - Created accounts loaded from Firestore:", formattedAccounts.length);
+        }
+      } catch (err) {
+        console.warn("⚠️ Could not load created accounts from Firestore:", err.message);
+      }
+    };
+    
+    loadCreatedAccountsFromFirestore();
   }, []);
 
   // ✅ PERSIST PPMP DEPARTMENTS
@@ -157,6 +226,26 @@ export default function BACDashboard({ files, setFiles }) {
       console.warn("⚠️ Could not save document templates:", err.message);
     }
   }, [docTemplates]);
+
+  // ✅ PERSIST CREATED ACCOUNTS
+  useEffect(() => {
+    try {
+      localStorage.setItem("createdAccounts", JSON.stringify(createdAccounts));
+      console.log("💾 Created Accounts saved:", createdAccounts.length);
+    } catch (err) {
+      console.warn("⚠️ Could not save created accounts:", err.message);
+    }
+  }, [createdAccounts]);
+
+  // ✅ PERSIST ACCOUNT REQUESTS
+  useEffect(() => {
+    try {
+      localStorage.setItem("accountRequests", JSON.stringify(accountRequests));
+      console.log("💾 Account Requests saved:", accountRequests.length);
+    } catch (err) {
+      console.warn("⚠️ Could not save account requests:", err.message);
+    }
+  }, [accountRequests]);
 
   /* ===== UPDATE STATUS WITH LOADING ===== */
   const updateStatus = (index, status) => {
@@ -220,11 +309,24 @@ export default function BACDashboard({ files, setFiles }) {
   };
 
   const handleDeleteTeamMember = (id) => {
-    if (window.confirm("Are you sure you want to delete this team member?")) {
-      setBacTeamMembers(bacTeamMembers.filter(m => m.id !== id));
+    const member = bacTeamMembers.find(m => m.id === id);
+    setTeamMemberToDelete(member);
+    setShowDeleteTeamMemberModal(true);
+  };
+
+  const confirmDeleteTeamMember = () => {
+    if (teamMemberToDelete) {
+      setBacTeamMembers(bacTeamMembers.filter(m => m.id !== teamMemberToDelete.id));
       setSuccessMessage("Team member deleted!");
       setShowSuccessModal(true);
+      setShowDeleteTeamMemberModal(false);
+      setTeamMemberToDelete(null);
     }
+  };
+
+  const cancelDeleteTeamMember = () => {
+    setShowDeleteTeamMemberModal(false);
+    setTeamMemberToDelete(null);
   };
 
   // DOCUMENT TEMPLATE FUNCTIONS
@@ -265,11 +367,24 @@ export default function BACDashboard({ files, setFiles }) {
   };
 
   const handleDeleteTemplate = (id) => {
-    if (window.confirm("Are you sure you want to delete this template?")) {
-      setDocTemplates(docTemplates.filter(t => t.id !== id));
+    const template = docTemplates.find(t => t.id === id);
+    setTemplateToDelete(template);
+    setShowDeleteTemplateModal(true);
+  };
+
+  const confirmDeleteTemplate = () => {
+    if (templateToDelete) {
+      setDocTemplates(docTemplates.filter(t => t.id !== templateToDelete.id));
       setSuccessMessage("Template deleted!");
       setShowSuccessModal(true);
+      setShowDeleteTemplateModal(false);
+      setTemplateToDelete(null);
     }
+  };
+
+  const cancelDeleteTemplate = () => {
+    setShowDeleteTemplateModal(false);
+    setTemplateToDelete(null);
   };
 
   const handleTemplateFileUpload = (e) => {
@@ -301,6 +416,201 @@ export default function BACDashboard({ files, setFiles }) {
       link.download = file.name;
       link.click();
     }
+  };
+
+  // ===== ACCOUNT CREATION FUNCTIONS =====
+  const handleCreateAccount = async (e) => {
+    e.preventDefault();
+    setAccountError("");
+    setAccountLoading(true);
+
+    // Validation
+    if (!accountForm.firstName.trim() || !accountForm.lastName.trim() || !accountForm.email.trim() || !accountForm.password.trim()) {
+      setAccountError("All fields are required");
+      setAccountLoading(false);
+      return;
+    }
+
+    if (accountForm.password !== accountForm.confirmPassword) {
+      setAccountError("Passwords do not match");
+      setAccountLoading(false);
+      return;
+    }
+
+    if (accountForm.password.length < 6) {
+      setAccountError("Password must be at least 6 characters");
+      setAccountLoading(false);
+      return;
+    }
+
+    if (!accountForm.email.includes("@")) {
+      setAccountError("Please enter a valid email address");
+      setAccountLoading(false);
+      return;
+    }
+
+    try {
+      console.log("[AdminCreateAccount] Creating account for:", accountForm.email);
+      
+      // Step 1: Create Firebase Auth user
+      const authResult = await adminCreateUser(accountForm.email, accountForm.password, `${accountForm.firstName} ${accountForm.lastName}`);
+      
+      if (!authResult.success) {
+        console.error("[AdminCreateAccount] Firebase creation failed:", authResult.error);
+        setAccountError("Account creation failed: " + authResult.error);
+        setAccountLoading(false);
+        return;
+      }
+
+      console.log("[AdminCreateAccount] Firebase user created, UID:", authResult.user.uid);
+
+      // Step 2: Save user data to Firestore
+      const userData = {
+        uid: authResult.user.uid,
+        email: accountForm.email.trim(),
+        fname: accountForm.firstName.trim(),
+        lname: accountForm.lastName.trim(),
+        displayName: `${accountForm.firstName} ${accountForm.lastName}`,
+        firstName: accountForm.firstName.trim(),
+        lastName: accountForm.lastName.trim(),
+        role: accountForm.role,
+        createdAt: new Date().toISOString(),
+        createdBy: currentUser?.email || "admin"
+      };
+
+      console.log("[AdminCreateAccount] Saving to Firestore:", userData);
+      
+      const dbResult = await createUserDocument(authResult.user.uid, userData);
+
+      if (!dbResult.success) {
+        console.error("[AdminCreateAccount] Firestore save failed:", dbResult.error);
+        setAccountError("Account created in Auth but database save failed: " + dbResult.error);
+        setAccountLoading(false);
+        return;
+      }
+
+      console.log("[AdminCreateAccount] Account created successfully!");
+
+      // Step 3: Add to created accounts list
+      const newAccount = {
+        id: authResult.user.uid,
+        ...userData,
+        createdDate: new Date().toISOString()
+      };
+      setCreatedAccounts([...createdAccounts, newAccount]);
+
+      // Step 4: Remove from pending requests if created from a request
+      if (selectedRequestId) {
+        const updatedRequests = accountRequests.filter(req => req.id !== selectedRequestId);
+        setAccountRequests(updatedRequests);
+        localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+      }
+
+      // Show success
+      setSuccessMessage(`Account created successfully for ${accountForm.firstName} ${accountForm.lastName}! Email: ${accountForm.email}`);
+      setShowSuccessModal(true);
+
+      // Reset form
+      setAccountForm({
+        firstName: "",
+        lastName: "",
+        email: "",
+        password: "",
+        confirmPassword: "",
+        role: "user"
+      });
+      setShowCreateAccountModal(false);
+      setSelectedRequestId(null);
+      setAccountLoading(false);
+
+    } catch (err) {
+      console.error("[AdminCreateAccount] Unexpected error:", err.message);
+      setAccountError("Error: " + err.message);
+      setAccountLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = (accountId) => {
+    const account = createdAccounts.find(a => a.id === accountId);
+    setAccountToDelete(account);
+    setShowDeleteAccountModal(true);
+  };
+
+  const confirmDeleteAccount = () => {
+    if (accountToDelete) {
+      setCreatedAccounts(createdAccounts.filter(a => a.id !== accountToDelete.id));
+      setSuccessMessage("Account record deleted!");
+      setShowSuccessModal(true);
+      setShowDeleteAccountModal(false);
+      setAccountToDelete(null);
+    }
+  };
+
+  const cancelDeleteAccount = () => {
+    setShowDeleteAccountModal(false);
+    setAccountToDelete(null);
+  };
+
+  const handleApproveRequest = (requestId) => {
+    const updatedRequests = accountRequests.map(req => 
+      req.id === requestId ? { ...req, status: "approved", approvedDate: new Date().toISOString() } : req
+    );
+    setAccountRequests(updatedRequests);
+    localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+    
+    // Also update in Firestore
+    updateAccountRequestStatus(requestId, "approved");
+    
+    setSuccessMessage("Account request approved!");
+    setShowSuccessModal(true);
+  };
+
+  const handleRejectRequest = (requestId) => {
+    const request = accountRequests.find(req => req.id === requestId);
+    setRequestToReject(request);
+    setShowRejectConfirmModal(true);
+  };
+
+  const confirmRejectRequest = () => {
+    if (requestToReject) {
+      const updatedRequests = accountRequests.map(req => 
+        req.id === requestToReject.id ? { ...req, status: "declined", declinedDate: new Date().toISOString() } : req
+      );
+      setAccountRequests(updatedRequests);
+      localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+      
+      // Also update in Firestore
+      updateAccountRequestStatus(requestToReject.id, "declined");
+      
+      setSuccessMessage("Account request declined.");
+      setShowSuccessModal(true);
+      setShowRejectConfirmModal(false);
+      setRequestToReject(null);
+    }
+  };
+
+  const cancelRejectRequest = () => {
+    setShowRejectConfirmModal(false);
+    setRequestToReject(null);
+  };
+
+  const handleCreateAccountFromRequest = (request) => {
+    // Parse name into first and last name
+    const nameParts = request.name.trim().split(" ");
+    const firstName = nameParts[0];
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : "";
+
+    setAccountForm({
+      firstName: firstName,
+      lastName: lastName,
+      email: "",
+      password: "",
+      confirmPassword: "",
+      role: "user"
+    });
+    setSelectedRequestId(request.id);
+    setShowCreateAccountModal(true);
+    setAccountError("");
   };
 
   /* ===== DECLINE FILE ===== */
@@ -348,6 +658,7 @@ export default function BACDashboard({ files, setFiles }) {
   const newSubmissionCount = files.filter(
   (f) => f.status === "Pending" && !f.isArchived
 ).length;
+  const pendingAccountRequestsCount = accountRequests.filter(req => !req.status || req.status === "pending").length;
 
 
   /* ===== FILTERED FILES ===== */
@@ -362,10 +673,20 @@ export default function BACDashboard({ files, setFiles }) {
   const activeFiles = useMemo(() => {
     const active = filteredFiles.filter(f => !f.isArchived);
     const sorted = [...active].sort((a, b) => {
+      const getTimestamp = (f) => {
+        if (f.uploadedAt) return new Date(f.uploadedAt).getTime();
+        if (f.createdAt) return new Date(f.createdAt).getTime();
+        if (f.date) return new Date(f.date).getTime();
+        return 0;
+      };
+      
+      const aTime = getTimestamp(a);
+      const bTime = getTimestamp(b);
+      
       if (sortOrder === "latest") {
-        return (b.timestamp || 0) - (a.timestamp || 0);
+        return bTime - aTime;
       } else {
-        return (a.timestamp || 0) - (b.timestamp || 0);
+        return aTime - bTime;
       }
     });
     return sorted;
@@ -374,10 +695,20 @@ export default function BACDashboard({ files, setFiles }) {
   const archivedFiles = useMemo(() => {
     const archived = filteredFiles.filter(f => f.isArchived);
     const sorted = [...archived].sort((a, b) => {
+      const getTimestamp = (f) => {
+        if (f.uploadedAt) return new Date(f.uploadedAt).getTime();
+        if (f.createdAt) return new Date(f.createdAt).getTime();
+        if (f.date) return new Date(f.date).getTime();
+        return 0;
+      };
+      
+      const aTime = getTimestamp(a);
+      const bTime = getTimestamp(b);
+      
       if (sortOrder === "latest") {
-        return (b.timestamp || 0) - (a.timestamp || 0);
+        return bTime - aTime;
       } else {
-        return (a.timestamp || 0) - (b.timestamp || 0);
+        return aTime - bTime;
       }
     });
     return sorted;
@@ -444,6 +775,25 @@ export default function BACDashboard({ files, setFiles }) {
           </div>
 
           <div
+            style={view === "createAccount" ? styles.navActive : styles.nav}
+            onClick={() => setView("createAccount")}
+          >
+            <span>Create User Account</span>
+          </div>
+
+          <div
+            style={view === "accountRequests" ? styles.navActive : styles.nav}
+            onClick={() => setView("accountRequests")}
+          >
+            <span>Account Requests</span>
+            {pendingAccountRequestsCount > 0 && (
+              <span style={styles.badge}>
+                {pendingAccountRequestsCount}
+              </span>
+            )}
+          </div>
+
+          <div
             style={view === "ppmp" ? styles.navActive : styles.nav}
             onClick={() => setView("ppmp")}
           >
@@ -481,6 +831,8 @@ export default function BACDashboard({ files, setFiles }) {
               ? "Edit About BAC"
               : view === "editDocTemplates"
               ? "Edit Documents Template"
+              : view === "createAccount"
+              ? "Create User Account"
               : view === "analytics"
               ? "Analytics & Reports"
               : "File Compilation Dashboard"}
@@ -498,8 +850,8 @@ export default function BACDashboard({ files, setFiles }) {
           </div>
         )}
 
-        {/* FILTER BAR - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, or Analytics view */}
-        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "analytics" && (
+        {/* FILTER BAR - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, Create Account, Account Requests, or Analytics view */}
+        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "createAccount" && view !== "accountRequests" && view !== "analytics" && view !== "pendingRequests" && view !== "approvedRequests" && view !== "declinedRequests" && (
         <div style={styles.filterBar}>
           <input
             style={styles.input}
@@ -552,8 +904,8 @@ export default function BACDashboard({ files, setFiles }) {
         </div>
         )}
 
-        {/* TABLE - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, or Analytics view */}
-        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "analytics" && (
+        {/* TABLE - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, Create Account, Account Requests, or Analytics view */}
+        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "createAccount" && view !== "accountRequests" && view !== "analytics" && view !== "pendingRequests" && view !== "approvedRequests" && view !== "declinedRequests" && (
         <div style={styles.tableBox}>
           <table style={styles.table}>
             <thead>
@@ -1146,6 +1498,214 @@ export default function BACDashboard({ files, setFiles }) {
           </>
         )}
 
+        {/* CREATE USER ACCOUNT VIEW */}
+        {view === "createAccount" && (
+          <>
+            <div style={styles.card}>
+              <h3>Create User Account</h3>
+              <p style={styles.cardDescription}>
+                Manually create a new user account. The account details will be stored in the database and users can log in with their email and password.
+              </p>
+              <button
+                style={styles.button}
+                onClick={() => {
+                  setShowCreateAccountModal(true);
+                  setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user" });
+                  setAccountError("");
+                  setSelectedRequestId(null);
+                }}
+              >
+                + Create New Account
+              </button>
+            </div>
+
+            {createdAccounts.length > 0 && (
+              <div style={styles.card}>
+                <h3>Created Accounts ({createdAccounts.length})</h3>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Created By</th>
+                        <th>Created Date</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {createdAccounts.map((account) => (
+                        <tr key={account.id}>
+                          <td style={{ fontWeight: "500" }}>{account.firstName} {account.lastName}</td>
+                          <td>{account.email}</td>
+                          <td>
+                            <span style={{
+                              display: "inline-block",
+                              padding: "4px 10px",
+                              backgroundColor: account.role === "admin" ? "#fdecea" : "#d1fae5",
+                              color: account.role === "admin" ? "#a60000" : "#065f46",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              fontWeight: "600"
+                            }}>
+                              {account.role}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: "12px", color: "#666" }}>{account.createdBy}</td>
+                          <td style={{ fontSize: "12px", color: "#999" }}>
+                            {new Date(account.createdDate).toLocaleDateString()}
+                          </td>
+                          <td style={{ textAlign: "center" }}>
+                            <button
+                              style={{...styles.declineButtonSmall, padding: "6px 12px", fontSize: "12px"}}
+                              onClick={() => handleDeleteAccount(account.id)}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {createdAccounts.length === 0 && (
+              <div style={styles.card}>
+                <p style={{ textAlign: "center", color: "#999" }}>No created accounts yet.</p>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ACCOUNT REQUESTS VIEW - Combined view for all request statuses */}
+        {view === "accountRequests" && (
+          <>
+            {/* PENDING REQUESTS SECTION */}
+            {accountRequests.filter(req => !req.status || req.status === "pending").length > 0 && (
+              <div style={styles.card}>
+                <h3>⏳ Pending Account Requests ({accountRequests.filter(req => !req.status || req.status === "pending").length})</h3>
+                <p style={styles.cardDescription}>
+                  Users who have requested accounts. Approve or reject their requests.
+                </p>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Department</th>
+                        <th>Email</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountRequests.filter(req => !req.status || req.status === "pending").map((request) => (
+                        <tr key={request.id}>
+                          <td style={{ fontWeight: "500" }}>{request.name}</td>
+                          <td>{request.department}</td>
+                          <td style={{ fontSize: "12px", color: "#666" }}>{request.email}</td>
+                          <td style={{ textAlign: "center" }}>
+                            <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+                              <button
+                                style={{...styles.button, padding: "6px 12px", fontSize: "12px"}}
+                                onClick={() => handleApproveRequest(request.id)}
+                              >
+                                ✓ Approve
+                              </button>
+                              <button
+                                style={{...styles.declineButtonSmall, padding: "6px 12px", fontSize: "12px"}}
+                                onClick={() => handleRejectRequest(request.id)}
+                              >
+                                ✕ Reject
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* APPROVED REQUESTS SECTION */}
+            {accountRequests.filter(req => req.status === "approved").length > 0 && (
+              <div style={styles.card}>
+                <h3>✓ Approved Requests ({accountRequests.filter(req => req.status === "approved").length})</h3>
+                <p style={styles.cardDescription}>
+                  Account requests that have been approved.
+                </p>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Department</th>
+                        <th>Email</th>
+                        <th>Approved Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountRequests.filter(req => req.status === "approved").map((request) => (
+                        <tr key={request.id}>
+                          <td style={{ fontWeight: "500" }}>{request.name}</td>
+                          <td>{request.department}</td>
+                          <td style={{ fontSize: "12px", color: "#666" }}>{request.email}</td>
+                          <td style={{ fontSize: "12px", color: "#22c55e", fontWeight: "600" }}>
+                            {new Date(request.approvedDate).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* DECLINED REQUESTS SECTION */}
+            {accountRequests.filter(req => req.status === "declined").length > 0 && (
+              <div style={styles.card}>
+                <h3>✕ Declined Requests ({accountRequests.filter(req => req.status === "declined").length})</h3>
+                <p style={styles.cardDescription}>
+                  Account requests that have been declined.
+                </p>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Department</th>
+                        <th>Email</th>
+                        <th>Declined Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountRequests.filter(req => req.status === "declined").map((request) => (
+                        <tr key={request.id}>
+                          <td style={{ fontWeight: "500" }}>{request.name}</td>
+                          <td>{request.department}</td>
+                          <td style={{ fontSize: "12px", color: "#666" }}>{request.email}</td>
+                          <td style={{ fontSize: "12px", color: "#ef4444", fontWeight: "600" }}>
+                            {new Date(request.declinedDate).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {accountRequests.length === 0 && (
+              <div style={styles.card}>
+                <p style={{ textAlign: "center", color: "#999" }}>No account requests yet.</p>
+              </div>
+            )}
+          </>
+        )}
+
         {/* ANALYTICS VIEW */}
         {view === "analytics" && (
           <>
@@ -1440,6 +2000,116 @@ export default function BACDashboard({ files, setFiles }) {
           </div>
         )}
 
+        {/* CREATE ACCOUNT MODAL */}
+        {showCreateAccountModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.modal}>
+              <h3 style={styles.modalTitle}>
+                {selectedRequestId ? "Create Account from Request" : "Create New User Account"}
+              </h3>
+              
+              {accountError && (
+                <div style={styles.errorBox}>
+                  <strong>Error:</strong> {accountError}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateAccount} style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div>
+                    <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>First Name *</label>
+                    <input
+                      type="text"
+                      value={accountForm.firstName}
+                      onChange={(e) => setAccountForm({ ...accountForm, firstName: e.target.value })}
+                      placeholder="First name"
+                      style={styles.input}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Last Name *</label>
+                    <input
+                      type="text"
+                      value={accountForm.lastName}
+                      onChange={(e) => setAccountForm({ ...accountForm, lastName: e.target.value })}
+                      placeholder="Last name"
+                      style={styles.input}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Email Address *</label>
+                  <input
+                    type="email"
+                    value={accountForm.email}
+                    onChange={(e) => setAccountForm({ ...accountForm, email: e.target.value })}
+                    placeholder="user@institution.edu"
+                    style={styles.input}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Password *</label>
+                  <input
+                    type="password"
+                    value={accountForm.password}
+                    onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })}
+                    placeholder="Minimum 6 characters"
+                    style={styles.input}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Confirm Password *</label>
+                  <input
+                    type="password"
+                    value={accountForm.confirmPassword}
+                    onChange={(e) => setAccountForm({ ...accountForm, confirmPassword: e.target.value })}
+                    placeholder="Re-enter password"
+                    style={styles.input}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Role *</label>
+                  <select
+                    value={accountForm.role}
+                    onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}
+                    style={styles.input}
+                  >
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+
+                <div style={styles.modalButtons}>
+                  <button
+                    type="button"
+                    style={styles.cancelButton}
+                    onClick={() => {
+                      setShowCreateAccountModal(false);
+                      setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user" });
+                      setAccountError("");
+                      setSelectedRequestId(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    style={{...styles.confirmButton, ...(accountLoading ? styles.buttonDisabled : {})}}
+                    disabled={accountLoading}
+                  >
+                    {accountLoading ? "Creating Account..." : "Create Account"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* ADD/EDIT TEAM MEMBER MODAL */}
         {showAddTeamMemberModal && (
           <div style={styles.modalOverlay}>
@@ -1610,6 +2280,137 @@ export default function BACDashboard({ files, setFiles }) {
                   onClick={() => setShowSuccessModal(false)}
                 >
                   OK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showRejectConfirmModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <h2 style={{ margin: 0, color: "white" }}>⚠️ Confirm Rejection</h2>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  Are you sure you want to reject the account request for <strong>{requestToReject?.name}</strong>?
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  This action will update their status to "Declined".
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#dc3545" }}
+                  onClick={confirmRejectRequest}
+                >
+                  Yes, Reject
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelRejectRequest}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE TEAM MEMBER CONFIRMATION MODAL */}
+        {showDeleteTeamMemberModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <h2 style={{ margin: 0, color: "white" }}>Delete Team Member</h2>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  Are you sure you want to delete <strong>{teamMemberToDelete?.name}</strong>?
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  This action cannot be undone.
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#dc3545" }}
+                  onClick={confirmDeleteTeamMember}
+                >
+                  Yes, Delete
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelDeleteTeamMember}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE TEMPLATE CONFIRMATION MODAL */}
+        {showDeleteTemplateModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <h2 style={{ margin: 0, color: "white" }}>🗑️ Delete Template</h2>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  Are you sure you want to delete <strong>{templateToDelete?.name}</strong>?
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  This action cannot be undone.
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#dc3545" }}
+                  onClick={confirmDeleteTemplate}
+                >
+                  Yes, Delete
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelDeleteTemplate}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE ACCOUNT CONFIRMATION MODAL */}
+        {showDeleteAccountModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <h2 style={{ margin: 0, color: "white" }}>🗑️ Delete Account Record</h2>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  Are you sure you want to delete the account for <strong>{accountToDelete?.firstName} {accountToDelete?.lastName}</strong>?
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  This only removes the record from the list, not from Firebase.
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#dc3545" }}
+                  onClick={confirmDeleteAccount}
+                >
+                  Yes, Delete
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelDeleteAccount}
+                >
+                  Cancel
                 </button>
               </div>
             </div>

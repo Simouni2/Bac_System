@@ -29,6 +29,8 @@ export const createUserDocument = async (userId, userData) => {
       firstName: userData.firstName || "",
       lastName: userData.lastName || "",
       role: userData.role || "user",
+      createdBy: userData.createdBy || "admin",
+      createdDate: userData.createdDate || new Date().toISOString(),
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
     };
@@ -537,6 +539,291 @@ export const deleteFileFromFirestore = async (fileId) => {
     return {
       success: false,
       error: error.message
+    };
+  }
+};
+// Account Requests Collection Functions
+const ACCOUNT_REQUESTS_COLLECTION = "accountRequests";
+
+// Create/Save account request to Firestore
+export const saveAccountRequest = async (requestData) => {
+  try {
+    const requestRef = doc(collection(db, ACCOUNT_REQUESTS_COLLECTION));
+    
+    const docData = {
+      name: requestData.name || "",
+      email: requestData.email || "",
+      department: requestData.department || "",
+      status: requestData.status || "pending",
+      requestedAt: Timestamp.now(),
+      approvedDate: requestData.approvedDate || null,
+      declinedDate: requestData.declinedDate || null,
+    };
+
+    console.log("Writing account request to Firestore:", docData);
+    
+    await setDoc(requestRef, docData);
+    
+    console.log("✓ Account request saved to Firestore");
+    return {
+      success: true,
+      message: "Account request saved",
+      id: requestRef.id,
+      data: docData
+    };
+  } catch (error) {
+    console.error("✗ Firestore error saving request:", error.code, error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Get all account requests from Firestore
+export const getAllAccountRequests = async () => {
+  try {
+    const q = query(collection(db, ACCOUNT_REQUESTS_COLLECTION));
+    const querySnapshot = await getDocs(q);
+    
+    const requests = [];
+    querySnapshot.forEach((doc) => {
+      requests.push({
+        id: doc.id,
+        ...doc.data(),
+        requestedAt: doc.data().requestedAt?.toDate?.()?.toISOString() || doc.data().requestedAt,
+        approvedDate: doc.data().approvedDate?.toDate?.()?.toISOString() || doc.data().approvedDate,
+        declinedDate: doc.data().declinedDate?.toDate?.()?.toISOString() || doc.data().declinedDate,
+      });
+    });
+
+    console.log("✓ Retrieved account requests from Firestore:", requests.length);
+    return {
+      success: true,
+      data: requests
+    };
+  } catch (error) {
+    console.error("✗ Error retrieving requests:", error.message);
+    return {
+      success: false,
+      error: error.message,
+      data: []
+    };
+  }
+};
+
+// Update account request status in Firestore
+export const updateAccountRequestStatus = async (requestId, status, updateData = {}) => {
+  try {
+    const requestRef = doc(db, ACCOUNT_REQUESTS_COLLECTION, requestId);
+    
+    const updates = {
+      status: status,
+      ...updateData
+    };
+
+    if (status === "approved") {
+      updates.approvedDate = Timestamp.now();
+    } else if (status === "declined") {
+      updates.declinedDate = Timestamp.now();
+    }
+
+    console.log("Updating request status in Firestore:", requestId, updates);
+
+    await updateDoc(requestRef, updates);
+    
+    console.log("✓ Account request status updated");
+    return {
+      success: true,
+      message: "Account request status updated"
+    };
+  } catch (error) {
+    console.error("✗ Firestore error updating request:", error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Get all created accounts (users) from Firestore
+export const getAllCreatedAccounts = async () => {
+  try {
+    const q = query(collection(db, USERS_COLLECTION));
+    const querySnapshot = await getDocs(q);
+    
+    const accounts = [];
+    querySnapshot.forEach((doc) => {
+      accounts.push({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || doc.data().createdAt,
+        updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString() || doc.data().updatedAt,
+      });
+    });
+
+    console.log("✓ Retrieved all created accounts from Firestore:", accounts.length);
+    return {
+      success: true,
+      data: accounts
+    };
+  } catch (error) {
+    console.error("✗ Error retrieving accounts:", error.message);
+    return {
+      success: false,
+      error: error.message,
+      data: []
+    };
+  }
+};
+
+// ==================== BAC FILES (ADMIN RECORDS) ====================
+
+// Save BAC files to Firestore - Each file as a separate document
+export const saveBACFilesToFirestore = async (bacFiles) => {
+  try {
+    const bacFilesCollection = collection(db, "bacFiles");
+    const uploadTimestamp = Timestamp.now();
+    const uploadBatchId = `batch_${Date.now()}`;
+
+    console.log("Writing BAC files to Firestore as separate documents:", bacFiles.length, "files");
+    
+    const filePromises = bacFiles.map(async (file) => {
+      try {
+        const fileDocRef = doc(bacFilesCollection);
+        
+        const fileData = {
+          // File Information
+          name: file.name || "Unnamed File",
+          fileName: file.fileName || file.name || "Unnamed File",
+          type: file.type || "document",
+          fileType: file.fileType || file.type || "unknown",
+          
+          // File Details
+          department: file.department || "General",
+          status: file.status || "Pending",
+          date: file.date || new Date().toISOString().split('T')[0],
+          time: file.time || new Date().toLocaleTimeString(),
+          
+          // Upload Info
+          uploadBatchId: uploadBatchId,
+          uploadedAt: uploadTimestamp,
+          createdAt: uploadTimestamp,
+          
+          // Metadata
+          size: file.size || 0,
+          isArchived: file.isArchived || false
+        };
+
+        await setDoc(fileDocRef, fileData);
+        console.log(`✓ File saved to bacFiles collection: ${file.name}`);
+
+        return {
+          success: true,
+          fileId: fileDocRef.id,
+          fileName: file.name
+        };
+      } catch (error) {
+        console.error(`✗ Error saving file ${file.name}:`, error.message);
+        return {
+          success: false,
+          fileName: file.name,
+          error: error.message
+        };
+      }
+    });
+
+    const results = await Promise.all(filePromises);
+    const successCount = results.filter(r => r.success).length;
+    const failureCount = results.filter(r => !r.success).length;
+
+    console.log(`📊 Upload Summary: ${successCount} succeeded, ${failureCount} failed`);
+
+    return {
+      success: successCount > 0,
+      totalFiles: bacFiles.length,
+      successCount: successCount,
+      failureCount: failureCount,
+      uploadBatchId: uploadBatchId,
+      message: `${successCount} file(s) saved to Firestore${failureCount > 0 ? `, ${failureCount} failed` : ""}`
+    };
+  } catch (error) {
+    console.error("✗ Firestore error saving BAC files:", error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Get all BAC files from Firestore
+export const getAllBACFilesFromFirestore = async () => {
+  try {
+    const bacFilesCollection = collection(db, "bacFiles");
+    const q = query(bacFilesCollection);
+    const querySnapshot = await getDocs(q);
+
+    const files = [];
+    querySnapshot.forEach((doc) => {
+      files.push({
+        id: doc.id,
+        ...doc.data(),
+        uploadedAt: doc.data().uploadedAt?.toDate?.()?.toISOString() || doc.data().uploadedAt,
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || doc.data().createdAt
+      });
+    });
+
+    console.log("✓ Retrieved all BAC files from Firestore:", files.length, "files");
+    return {
+      success: true,
+      data: files
+    };
+  } catch (error) {
+    console.error("✗ Error retrieving BAC files from Firestore:", error.message);
+    return {
+      success: false,
+      error: error.message,
+      data: []
+    };
+  }
+};
+
+// ✅ GET ALL USER-UPLOADED FILES FROM `files` COLLECTION
+export const getAllUploadedFilesFromFirestore = async () => {
+  try {
+    const filesCollection = collection(db, "files");
+    const q = query(filesCollection);
+    const querySnapshot = await getDocs(q);
+
+    const files = [];
+    querySnapshot.forEach((doc) => {
+      files.push({
+        id: doc.id,
+        ...doc.data(),
+        uploadedAt: doc.data().uploadedAt?.toDate?.()?.toISOString() || doc.data().uploadedAt,
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || doc.data().createdAt,
+        userEmail: doc.data().email, // Map email field to userEmail for compatibility
+        name: doc.data().fileName || doc.data().name,
+        fileName: doc.data().fileName || doc.data().name,
+        type: doc.data().fileType || doc.data().type,
+        status: doc.data().status || "Pending",
+        isArchived: doc.data().isArchived || false
+      });
+    });
+
+    console.log("✓ Retrieved all user-uploaded files from Firestore:", files.length, "files");
+    return {
+      success: true,
+      data: files,
+      source: "user_uploads"
+    };
+  } catch (error) {
+    console.error("✗ Error retrieving user-uploaded files from Firestore:", error.message);
+    return {
+      success: false,
+      error: error.message,
+      data: [],
+      source: "user_uploads"
     };
   }
 };

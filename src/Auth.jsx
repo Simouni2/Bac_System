@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { signUp, signIn } from "./firebase/authService";
-import { createUserDocument, getUserDocument } from "./firebase/userService";
+import { signIn } from "./firebase/authService";
+import { getUserDocument, saveAccountRequest } from "./firebase/userService";
 
 const maroon = "#7a0019";
 
@@ -11,10 +11,18 @@ export default function Auth({ onLogin, onBackToRole }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [requesterName, setRequesterName] = useState("");
+  const [requesterDepartment, setRequesterDepartment] = useState("");
+  const [requesterEmail, setRequesterEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [isRequestingAccount, setIsRequestingAccount] = useState(false);
+  const [accountRequests, setAccountRequests] = useState(() => {
+    const saved = localStorage.getItem("accountRequests");
+    return saved ? JSON.parse(saved) : [];
+  });
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -58,91 +66,66 @@ export default function Auth({ onLogin, onBackToRole }) {
       });
   };
 
-  const handleSignup = async (e) => {
+  const handleRequestAccount = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     // Validation
-    if (!firstName.trim() || !lastName.trim() || !email.trim() || !password.trim()) {
-      setError("All fields are required");
+    if (!requesterName.trim() || !requesterDepartment.trim() || !requesterEmail.trim()) {
+      setError("Please fill in all fields");
       setLoading(false);
       return;
     }
 
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      setLoading(false);
-      return;
-    }
-
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters");
-      setLoading(false);
-      return;
-    }
-
-    if (!email.includes("@")) {
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(requesterEmail.trim())) {
       setError("Please enter a valid email address");
       setLoading(false);
       return;
     }
 
     try {
-      console.log("[Auth] Starting signup...");
+      console.log("[Auth] Submitting account request...");
       
-      // Step 1: Create Firebase Auth user
-      const signUpResult = await signUp(email, password, `${firstName} ${lastName}`);
-      
-      if (!signUpResult.success) {
-        console.error("[Auth] Firebase signup failed:", signUpResult.error);
-        setError("Signup failed: " + signUpResult.error);
-        setLoading(false);
-        return;
-      }
-
-      console.log("[Auth] Firebase user created, UID:", signUpResult.user.uid);
-
-      // Step 2: Save user data to Firestore
-      const userData = {
-        uid: signUpResult.user.uid,
-        email: email.trim(),
-        fname: firstName.trim(),
-        lname: lastName.trim(),
-        displayName: `${firstName} ${lastName}`,
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        role: "user",
-        createdAt: new Date().toISOString(),
+      // Create account request
+      const accountRequest = {
+        name: requesterName.trim(),
+        department: requesterDepartment.trim(),
+        email: requesterEmail.trim(),
+        status: "pending"
       };
 
-      console.log("[Auth] Saving to Firestore:", userData);
-      
-      const dbResult = await createUserDocument(signUpResult.user.uid, userData);
+      console.log("[Auth] Account request created:", accountRequest);
 
-      if (!dbResult.success) {
-        console.error("[Auth] Firestore save failed:", dbResult.error);
-        setError("Signup succeeded but database save failed: " + dbResult.error);
+      // Step 1: Save to Firestore
+      const firestoreResult = await saveAccountRequest(accountRequest);
+      
+      if (!firestoreResult.success) {
+        console.error("[Auth] Firestore save failed:", firestoreResult.error);
+        setError("Request submission failed: " + firestoreResult.error);
         setLoading(false);
         return;
       }
 
-      console.log("[Auth] Success! User saved to database");
+      console.log("[Auth] Request saved to Firestore with ID:", firestoreResult.id);
 
-      // Save to localStorage
-      localStorage.setItem("currentUser", JSON.stringify(userData));
+      // Step 2: Save to localStorage for backup
+      const updatedRequests = [...accountRequests, { ...accountRequest, id: firestoreResult.id, requestedAt: new Date().toISOString() }];
+      localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+      setAccountRequests(updatedRequests);
 
       // Show success modal
-      setSuccessMessage(`Welcome ${firstName}! Your account has been created successfully.`);
+      setSuccessMessage(` Success!\n\nCheck your email at: ${requesterEmail}\n\nWe will send your account details once the admin approves your request.`);
       setShowSuccessModal(true);
       
       setLoading(false);
       
-      // Redirect after 2 seconds
-      setTimeout(() => {
-        setShowSuccessModal(false);
-        onLogin();
-      }, 2000);
+      // Reset form
+      setRequesterName("");
+      setRequesterDepartment("");
+      setRequesterEmail("");
 
     } catch (err) {
       console.error("[Auth] Unexpected error:", err.message);
@@ -152,7 +135,14 @@ export default function Auth({ onLogin, onBackToRole }) {
   };
 
   return (
-    <div style={styles.container}>
+    <>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+      <div style={styles.container}>
       <div style={styles.formCard}>
         <div style={styles.header}>
           <h1 style={styles.title}>BAC Records System</h1>
@@ -208,15 +198,18 @@ export default function Auth({ onLogin, onBackToRole }) {
                 setConfirmPassword("");
                 setFirstName("");
                 setLastName("");
+                setRequesterName("");
+                setRequesterDepartment("");
+                setRequesterEmail("");
               }}>
-                Sign up here
+                Request account here
               </span>
             </p>
           </form>
         ) : (
-          <form onSubmit={handleSignup} style={styles.form}>
-            <h2 style={styles.formTitle}>Create Account</h2>
-            <p style={styles.formSubtitle}>Register to start submitting documents</p>
+          <form onSubmit={handleRequestAccount} style={styles.form}>
+            <h2 style={styles.formTitle}>Request Account</h2>
+            <p style={styles.formSubtitle}>Submit your information for admin approval</p>
 
             {error && (
               <div style={styles.errorBox}>
@@ -224,65 +217,41 @@ export default function Auth({ onLogin, onBackToRole }) {
               </div>
             )}
 
-            <div style={styles.twoColumnGroup}>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>First Name</label>
-                <input
-                  type="text"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  placeholder="First name"
-                  style={styles.input}
-                />
-              </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Name</label>
+              <input
+                type="text"
+                value={requesterName}
+                onChange={(e) => setRequesterName(e.target.value)}
+                placeholder="Full name"
+                style={styles.input}
+              />
+            </div>
 
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Last Name</label>
-                <input
-                  type="text"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  placeholder="Last name"
-                  style={styles.input}
-                />
-              </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Department</label>
+              <input
+                type="text"
+                value={requesterDepartment}
+                onChange={(e) => setRequesterDepartment(e.target.value)}
+                placeholder="e.g., Finance, HR, Registrar"
+                style={styles.input}
+              />
             </div>
 
             <div style={styles.inputGroup}>
               <label style={styles.label}>Email Address</label>
               <input
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="your.email@institution.edu"
-                style={styles.input}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.label}>Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Minimum 6 characters"
-                style={styles.input}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.label}>Confirm Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Re-enter your password"
+                value={requesterEmail}
+                onChange={(e) => setRequesterEmail(e.target.value)}
+                placeholder="your.email@gmail.com"
                 style={styles.input}
               />
             </div>
 
             <button type="submit" disabled={loading} style={{...styles.submitButton, ...(loading ? styles.buttonDisabled : {})}}>
-              {loading ? "Creating account..." : "Sign Up"}
+              {loading ? "Submitting request..." : "Request Account"}
             </button>
 
             <div style={styles.divider}>or</div>
@@ -297,6 +266,9 @@ export default function Auth({ onLogin, onBackToRole }) {
                 setConfirmPassword("");
                 setFirstName("");
                 setLastName("");
+                setRequesterName("");
+                setRequesterDepartment("");
+                setRequesterEmail("");
               }}>
                 Login here
               </span>
@@ -320,23 +292,37 @@ export default function Auth({ onLogin, onBackToRole }) {
               <p style={{ fontSize: 16, color: "#333", marginBottom: 20 }}>
                 {successMessage}
               </p>
-              <p style={{ fontSize: 13, color: "#666", marginBottom: 0 }}>
-                Redirecting to dashboard...
-              </p>
             </div>
             <div style={styles.modalFooter}>
-              <div style={styles.spinner}></div>
+              <button
+                style={styles.submitButton}
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  setIsSignup(false);
+                }}
+              >
+                Back to Login
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* LOADING SCREEN */}
-      {loading && (
-        <div style={styles.loadingOverlay}>
-          <div style={styles.loadingContainer}>
-            <div style={styles.loadingSpinner}></div>
-            <p style={styles.loadingText}>Logging in...</p>
+      {/* LOADING MODAL */}
+      {loading && !showSuccessModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h2 style={{ margin: 0, color: "white" }}>Processing...</h2>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+                <div style={styles.loadingSpinner}></div>
+              </div>
+              <p style={{ fontSize: 16, color: "#333", textAlign: "center" }}>
+                Submitting your account request...
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -351,6 +337,7 @@ export default function Auth({ onLogin, onBackToRole }) {
         <p style={styles.footerText}>© 2026 BAC | Records Management System</p>
       </div>
     </div>
+    </>
   );
 }
 
@@ -596,8 +583,8 @@ const styles = {
   loadingSpinner: {
     width: 50,
     height: 50,
-    border: "4px solid rgba(255, 255, 255, 0.3)",
-    borderTop: "4px solid white",
+    border: "4px solid rgba(122, 0, 25, 0.2)",
+    borderTop: "4px solid #7a0019",
     borderRadius: "50%",
     animation: "spin 0.8s linear infinite",
   },

@@ -4,6 +4,7 @@ import Auth from "./Auth";
 import AdminAuth from "./AdminAuth";
 import AdminDashboard from "./AdminDashboard";
 import UserDashboard from "./UserDashboard";
+import { getAllUploadedFilesFromFirestore } from "./firebase/userService";
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -38,6 +39,32 @@ export default function App() {
       }
     }
     setLoading(false);
+  }, []);
+
+  // Load files from Firebase on app startup if localStorage is empty
+  useEffect(() => {
+    const loadFilesFromFirebase = async () => {
+      // Only load if localStorage is empty
+      if (files.length === 0) {
+        console.log("📥 App - Loading files from Firestore (localStorage was empty)...");
+        try {
+          const result = await getAllUploadedFilesFromFirestore();
+          console.log("📥 App - Firestore response:", result);
+          if (result.success && result.data && result.data.length > 0) {
+            console.log(`✅ App loaded ${result.data.length} files from Firestore`, result.data);
+            setFiles(result.data);
+          } else {
+            console.log("ℹ️ App - No files found in Firestore");
+          }
+        } catch (error) {
+          console.error("❌ App - Error loading files from Firestore:", error);
+        }
+      } else {
+        console.log("ℹ️ App - Skipping Firestore load, using localStorage:", files.length, "files");
+      }
+    };
+
+    loadFilesFromFirebase();
   }, []);
 
   // Persist files to localStorage whenever they change

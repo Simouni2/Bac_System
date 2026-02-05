@@ -150,3 +150,43 @@ export const updateUserProfile = async (updates) => {
     return { success: false, error: error.message };
   }
 };
+
+export const adminCreateUser = async (email, password, displayName = "") => {
+  try {
+    console.log("[adminCreateUser] 🔵 Admin creating account for:", email);
+    
+    if (!auth) {
+      console.error("[adminCreateUser] ❌ CRITICAL: auth is null/undefined!");
+      throw new Error("Firebase Auth not initialized");
+    }
+    
+    console.log("[adminCreateUser] 🔵 Creating Firebase user for:", email);
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+    
+    console.log("[adminCreateUser] ✅ Firebase user created. UID:", user.uid);
+
+    if (displayName) {
+      await updateProfile(user, { displayName });
+      console.log("[adminCreateUser] ✅ Profile updated with display name");
+    }
+
+    return {
+      success: true,
+      user: {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName
+      }
+    };
+  } catch (error) {
+    console.error("[adminCreateUser] ❌ ERROR CODE:", error.code);
+    console.error("[adminCreateUser] ❌ ERROR MESSAGE:", error.message);
+    
+    return {
+      success: false,
+      error: error.message || "Account creation failed",
+      code: error.code
+    };
+  }
+};
