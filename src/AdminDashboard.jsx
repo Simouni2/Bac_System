@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { adminCreateUser } from "./firebase/authService";
 import { createUserDocument, saveAccountRequest, getAllAccountRequests, updateAccountRequestStatus, getAllCreatedAccounts } from "./firebase/userService";
 
@@ -95,7 +95,8 @@ export default function BACDashboard({ files, setFiles }) {
     email: "",
     password: "",
     confirmPassword: "",
-    role: "user"
+    role: "user",
+    adminConfirm: false
   });
   const [accountError, setAccountError] = useState("");
   const [accountLoading, setAccountLoading] = useState(false);
@@ -212,6 +213,8 @@ export default function BACDashboard({ files, setFiles }) {
     try {
       localStorage.setItem("bacTeamMembers", JSON.stringify(bacTeamMembers));
       console.log("💾 BAC Team Members saved:", bacTeamMembers.length);
+      // Dispatch custom event for same-tab updates
+      window.dispatchEvent(new CustomEvent("bacTeamMembersUpdated", { detail: bacTeamMembers }));
     } catch (err) {
       console.warn("⚠️ Could not save BAC team members:", err.message);
     }
@@ -222,6 +225,8 @@ export default function BACDashboard({ files, setFiles }) {
     try {
       localStorage.setItem("docTemplates", JSON.stringify(docTemplates));
       console.log("💾 Document Templates saved:", docTemplates.length);
+      // Dispatch custom event for same-tab updates
+      window.dispatchEvent(new CustomEvent("docTemplatesUpdated", { detail: docTemplates }));
     } catch (err) {
       console.warn("⚠️ Could not save document templates:", err.message);
     }
@@ -237,6 +242,26 @@ export default function BACDashboard({ files, setFiles }) {
     }
   }, [createdAccounts]);
 
+  // ✅ RELOAD BAC TEAM MEMBERS WHEN SWITCHING ACCOUNTS OR VIEWING EDIT PAGE
+  useEffect(() => {
+    if (view === "editAboutBac") {
+      const saved = localStorage.getItem("bacTeamMembers");
+      if (saved) {
+        const reloadedMembers = JSON.parse(saved);
+        setBacTeamMembers(reloadedMembers);
+        console.log("🔄 BAC Team Members reloaded from localStorage:", reloadedMembers.length);
+      }
+    }
+    if (view === "editDocTemplates") {
+      const saved = localStorage.getItem("docTemplates");
+      if (saved) {
+        const reloadedTemplates = JSON.parse(saved);
+        setDocTemplates(reloadedTemplates);
+        console.log("🔄 Document Templates reloaded from localStorage:", reloadedTemplates.length);
+      }
+    }
+  }, [view]);
+
   // ✅ PERSIST ACCOUNT REQUESTS
   useEffect(() => {
     try {
@@ -246,6 +271,20 @@ export default function BACDashboard({ files, setFiles }) {
       console.warn("⚠️ Could not save account requests:", err.message);
     }
   }, [accountRequests]);
+
+  // ✅ RELOAD DATA WHEN ACCOUNT CHANGES (NEW ADMIN LOGS IN)
+  useEffect(() => {
+    const savedMembers = localStorage.getItem("bacTeamMembers");
+    if (savedMembers) {
+      setBacTeamMembers(JSON.parse(savedMembers));
+      console.log("🔄 BAC Team Members synced on account change");
+    }
+    const savedTemplates = localStorage.getItem("docTemplates");
+    if (savedTemplates) {
+      setDocTemplates(JSON.parse(savedTemplates));
+      console.log("🔄 Document Templates synced on account change");
+    }
+  }, [currentUser?.email]);
 
   /* ===== UPDATE STATUS WITH LOADING ===== */
   const updateStatus = (index, status) => {
@@ -663,56 +702,85 @@ export default function BACDashboard({ files, setFiles }) {
 
   /* ===== FILTERED FILES ===== */
   const filteredFiles = useMemo(() => {
-    return files.filter(f =>
-      f.name.toLowerCase().includes(search.toLowerCase()) &&
+    const filtered = files.filter(f =>
+      (f.name || f.fileName || "").toLowerCase().includes(search.toLowerCase()) &&
       (departmentFilter ? f.department === departmentFilter : true) &&
       (statusFilter ? f.status === statusFilter : true)
     );
+    console.log("📊 Filtered files:", filtered.length, "files from", files.length, "total");
+    if (filtered.length > 0) {
+      console.log("📋 Sample file:", { 
+        name: filtered[0].name || filtered[0].fileName, 
+        date: filtered[0].date, 
+        time: filtered[0].time,
+        timestamp: filtered[0].timestamp,
+        uploadedAt: filtered[0].uploadedAt,
+        createdAt: filtered[0].createdAt
+      });
+    }
+    return filtered;
   }, [files, search, departmentFilter, statusFilter]);
+
+  /* ===== SORTED FILES ===== */
+  // Helper function to extract timestamp from file - tries timestamp first (UserDashboard format)
+  const getTimestamp = useCallback((f) => {
+    let timestamp = 0;
+    
+    // Try timestamp first (this is what UserDashboard uses)
+    if (f.timestamp) {
+      timestamp = f.timestamp;
+    } 
+    // Try Firebase timestamps next
+    else if (f.uploadedAt) {
+      timestamp = new Date(f.uploadedAt).getTime();
+    } 
+    else if (f.createdAt) {
+      timestamp = new Date(f.createdAt).getTime();
+    } 
+    // Try date/time string
+    else if (f.date) {
+      timestamp = new Date(f.date).getTime();
+    } 
+    else if (f.lastModified) {
+      timestamp = f.lastModified;
+    }
+    
+    return isNaN(timestamp) ? 0 : timestamp;
+  }, []);
 
   const activeFiles = useMemo(() => {
     const active = filteredFiles.filter(f => !f.isArchived);
     const sorted = [...active].sort((a, b) => {
-      const getTimestamp = (f) => {
-        if (f.uploadedAt) return new Date(f.uploadedAt).getTime();
-        if (f.createdAt) return new Date(f.createdAt).getTime();
-        if (f.date) return new Date(f.date).getTime();
-        return 0;
-      };
-      
       const aTime = getTimestamp(a);
       const bTime = getTimestamp(b);
       
       if (sortOrder === "latest") {
-        return bTime - aTime;
+        return bTime - aTime; // Newest first
       } else {
-        return aTime - bTime;
+        return aTime - bTime; // Oldest first
       }
     });
+    console.log("⬇️ Active files sorted:", sorted.length, "files, order:", sortOrder,
+      sorted.map(f => ({ name: f.name, date: f.date, time: f.time, timestamp: getTimestamp(f) })));
     return sorted;
-  }, [filteredFiles, sortOrder]);
+  }, [filteredFiles, sortOrder, getTimestamp]);
 
   const archivedFiles = useMemo(() => {
     const archived = filteredFiles.filter(f => f.isArchived);
     const sorted = [...archived].sort((a, b) => {
-      const getTimestamp = (f) => {
-        if (f.uploadedAt) return new Date(f.uploadedAt).getTime();
-        if (f.createdAt) return new Date(f.createdAt).getTime();
-        if (f.date) return new Date(f.date).getTime();
-        return 0;
-      };
-      
       const aTime = getTimestamp(a);
       const bTime = getTimestamp(b);
       
       if (sortOrder === "latest") {
-        return bTime - aTime;
+        return bTime - aTime; // Newest first
       } else {
-        return aTime - bTime;
+        return aTime - bTime; // Oldest first
       }
     });
+    console.log("📦 Archived files sorted:", sorted.length, "files, order:", sortOrder, 
+      sorted.map(f => ({ name: f.name, date: f.date, time: f.time, timestamp: getTimestamp(f) })));
     return sorted;
-  }, [filteredFiles, sortOrder]);
+  }, [filteredFiles, sortOrder, getTimestamp]);
 
   const departments = useMemo(() => {
     const uniqueDepts = [...new Set(files.map(f => normalizeDepartment(f.department)))].filter(d => d);
@@ -886,12 +954,12 @@ export default function BACDashboard({ files, setFiles }) {
           <button
             style={styles.sortButton}
             onClick={() => setSortOrder(sortOrder === "latest" ? "oldest" : "latest")}
-            title={sortOrder === "latest" ? "Latest to Oldest" : "Oldest to Latest"}
+            title={sortOrder === "latest" ? "Showing Latest to Oldest - Click for Oldest to Latest" : "Showing Oldest to Latest - Click for Latest to Oldest"}
           >
-            {sortOrder === "latest" ? "↓" : "↑"}
+            {sortOrder === "latest" ? " Latest" : " Oldest"}
           </button>
 
-          <button
+          {/* <button
             style={styles.button}
             onClick={() => {
               setSearch("");
@@ -900,7 +968,7 @@ export default function BACDashboard({ files, setFiles }) {
             }}
           >
             Reset
-          </button>
+          </button> */}
         </div>
         )}
 
@@ -1136,8 +1204,8 @@ export default function BACDashboard({ files, setFiles }) {
         {/* PPMP MANAGEMENT VIEW */}
         {view === "ppmp" && (
           <>
-            {/* ADD NEW DEPARTMENT SECTION - Only show if current user is the PPMP verifier */}
-            {currentUser?.email === PPMP_VERIFIER_EMAIL && (
+            {/* ADD NEW DEPARTMENT SECTION - Only show if current user is an admin */}
+            {currentUser?.role === "admin" && (
             <div style={styles.card}>
               <h3>Add PPMP Department</h3>
               <p style={styles.cardDescription}>
@@ -1179,7 +1247,7 @@ export default function BACDashboard({ files, setFiles }) {
             )}
 
             {/* EXISTING DEPARTMENTS LIST */}
-            {currentUser?.email === PPMP_VERIFIER_EMAIL && ppmpDepartments.length > 0 && (
+            {currentUser?.role === "admin" && ppmpDepartments.length > 0 && (
               <div style={styles.card}>
                 <h3>Active PPMP Departments</h3>
                 <div style={styles.ppmpDeptGrid}>
@@ -1203,7 +1271,7 @@ export default function BACDashboard({ files, setFiles }) {
             )}
 
             {/* ADMIN PPMP VERIFICATION SECTION - Only for admin */}
-            {currentUser?.email === PPMP_VERIFIER_EMAIL && (
+            {currentUser?.role === "admin" && (
             <div style={styles.card}>
               <h3>Verify User PPMP Status</h3>
               <p style={styles.cardDescription}>
@@ -1510,7 +1578,7 @@ export default function BACDashboard({ files, setFiles }) {
                 style={styles.button}
                 onClick={() => {
                   setShowCreateAccountModal(true);
-                  setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user" });
+                  setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user", adminConfirm: false });
                   setAccountError("");
                   setSelectedRequestId(null);
                 }}
@@ -2005,12 +2073,34 @@ export default function BACDashboard({ files, setFiles }) {
           <div style={styles.modalOverlay}>
             <div style={styles.modal}>
               <h3 style={styles.modalTitle}>
-                {selectedRequestId ? "Create Account from Request" : "Create New User Account"}
+                {selectedRequestId 
+                  ? "Create Account from Request" 
+                  : accountForm.role === "admin" 
+                  ? "Create New Admin Account" 
+                  : "Create New User Account"}
               </h3>
               
               {accountError && (
                 <div style={styles.errorBox}>
                   <strong>Error:</strong> {accountError}
+                </div>
+              )}
+
+              {/* ADMIN WARNING */}
+              {accountForm.role === "admin" && (
+                <div style={{
+                  padding: "12px",
+                  backgroundColor: "#fff3cd",
+                  border: "1px solid #ffc107",
+                  borderRadius: "5px",
+                  marginBottom: "15px"
+                }}>
+                  <p style={{ margin: 0, fontSize: "13px", color: "#856404", fontWeight: "500" }}>
+                    ⚠️ Warning: You are creating an ADMIN account
+                  </p>
+                  <p style={{ margin: "5px 0 0 0", fontSize: "12px", color: "#856404" }}>
+                    Admin accounts have full access to all system features including file management, user management, and PPMP verification.
+                  </p>
                 </div>
               )}
 
@@ -2084,13 +2174,50 @@ export default function BACDashboard({ files, setFiles }) {
                   </select>
                 </div>
 
+                {/* ADMIN-SPECIFIC FIELDS */}
+                {accountForm.role === "admin" && (
+                  <>
+                    <div style={{
+                      padding: "12px",
+                      backgroundColor: "#f0f8ff",
+                      border: "1px solid #0066cc",
+                      borderRadius: "5px"
+                    }}>
+                      <p style={{ margin: "0 0 10px 0", fontSize: "13px", fontWeight: "500", color: "#0066cc" }}>
+                        Admin Responsibilities:
+                      </p>
+                      <ul style={{ margin: 0, paddingLeft: "20px", fontSize: "12px", color: "#333", lineHeight: "1.6" }}>
+                        <li>Manage file submissions and approvals</li>
+                        <li>Verify PPMP status across departments</li>
+                        <li>Create and manage user accounts</li>
+                        <li>Edit team members and templates</li>
+                        <li>View analytics and reports</li>
+                      </ul>
+                    </div>
+
+                    <div>
+                      <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px" }}>
+                        <input
+                          type="checkbox"
+                          checked={accountForm.adminConfirm || false}
+                          onChange={(e) => setAccountForm({ ...accountForm, adminConfirm: e.target.checked })}
+                          style={{ cursor: "pointer", width: "16px", height: "16px" }}
+                        />
+                        <span style={{ fontWeight: "500" }}>
+                          I confirm I want to create this Admin account
+                        </span>
+                      </label>
+                    </div>
+                  </>
+                )}
+
                 <div style={styles.modalButtons}>
                   <button
                     type="button"
                     style={styles.cancelButton}
                     onClick={() => {
                       setShowCreateAccountModal(false);
-                      setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user" });
+                      setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user", adminConfirm: false });
                       setAccountError("");
                       setSelectedRequestId(null);
                     }}
@@ -2099,8 +2226,8 @@ export default function BACDashboard({ files, setFiles }) {
                   </button>
                   <button
                     type="submit"
-                    style={{...styles.confirmButton, ...(accountLoading ? styles.buttonDisabled : {})}}
-                    disabled={accountLoading}
+                    style={{...styles.confirmButton, ...(accountLoading || (accountForm.role === "admin" && !accountForm.adminConfirm) ? styles.buttonDisabled : {})}}
+                    disabled={accountLoading || (accountForm.role === "admin" && !accountForm.adminConfirm)}
                   >
                     {accountLoading ? "Creating Account..." : "Create Account"}
                   </button>
@@ -2290,7 +2417,7 @@ export default function BACDashboard({ files, setFiles }) {
           <div style={styles.modalOverlay}>
             <div style={styles.successModalContent}>
               <div style={styles.successModalHeader}>
-                <h2 style={{ margin: 0, color: "white" }}>⚠️ Confirm Rejection</h2>
+                <h2 style={{ margin: 0, color: "white" }}> Confirm Rejection</h2>
               </div>
               <div style={styles.successModalBody}>
                 <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
@@ -2356,7 +2483,7 @@ export default function BACDashboard({ files, setFiles }) {
           <div style={styles.modalOverlay}>
             <div style={styles.successModalContent}>
               <div style={styles.successModalHeader}>
-                <h2 style={{ margin: 0, color: "white" }}>🗑️ Delete Template</h2>
+                <h2 style={{ margin: 0, color: "white" }}>Delete Template</h2>
               </div>
               <div style={styles.successModalBody}>
                 <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
@@ -2389,7 +2516,7 @@ export default function BACDashboard({ files, setFiles }) {
           <div style={styles.modalOverlay}>
             <div style={styles.successModalContent}>
               <div style={styles.successModalHeader}>
-                <h2 style={{ margin: 0, color: "white" }}>🗑️ Delete Account Record</h2>
+                <h2 style={{ margin: 0, color: "white" }}> Delete Account Record</h2>
               </div>
               <div style={styles.successModalBody}>
                 <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
@@ -2604,15 +2731,19 @@ navActive: {
   },
 
   sortButton: {
-    background: "transparent",
-    color: maroon,
-    padding: "8px 12px",
+    background: maroon,
+    color: "white",
+    padding: "10px 16px",
     border: "none",
+    borderRadius: 6,
     outline: "none",
     cursor: "pointer",
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: "bold",
-    transition: "opacity 0.2s",
+    transition: "all 0.2s",
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
   },
 
   buttonSmall: {
@@ -2784,6 +2915,8 @@ navActive: {
     boxShadow: "0 4px 20px rgba(0, 0, 0, 0.15)",
     minWidth: 400,
     maxWidth: 500,
+    maxHeight: "85vh",
+    overflow: "auto",
   },
 
   modalTitle: {

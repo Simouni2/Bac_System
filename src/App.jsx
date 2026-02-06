@@ -51,7 +51,17 @@ export default function App() {
           const result = await getAllUploadedFilesFromFirestore();
           console.log("📥 App - Firestore response:", result);
           if (result.success && result.data && result.data.length > 0) {
-            console.log(`✅ App loaded ${result.data.length} files from Firestore`, result.data);
+            console.log(`✅ App loaded ${result.data.length} files from Firestore`);
+            if (result.data[0]) {
+              console.log("📋 App - First file structure:", {
+                name: result.data[0].name || result.data[0].fileName,
+                date: result.data[0].date,
+                time: result.data[0].time,
+                timestamp: result.data[0].timestamp,
+                uploadedAt: result.data[0].uploadedAt,
+                createdAt: result.data[0].createdAt
+              });
+            }
             setFiles(result.data);
           } else {
             console.log("ℹ️ App - No files found in Firestore");

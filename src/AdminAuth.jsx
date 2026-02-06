@@ -1,8 +1,8 @@
 import { useState } from "react";
+import { signIn } from "./firebase/authService";
+import { getUserDocument } from "./firebase/userService";
 
 const maroon = "#7a0019";
-const ADMIN_EMAIL = "bacadmin@gmail.com";
-const ADMIN_PASSWORD = "bac1234";
 
 export default function AdminAuth({ onLogin, onBackToRole }) {
   const [email, setEmail] = useState("");
@@ -22,28 +22,47 @@ export default function AdminAuth({ onLogin, onBackToRole }) {
       return;
     }
 
-    // Check admin credentials
-    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      localStorage.setItem("currentUser", JSON.stringify({
-        email: ADMIN_EMAIL,
-        firstName: "Admin",
-        lastName: "BAC",
-        uid: "admin-user-001",
-        role: "admin"
-      }));
+    // Firebase login
+    signIn(email, password)
+      .then(async (result) => {
+        if (!result.success) {
+          setError(result.error || "Login failed. Please check your credentials.");
+          setLoading(false);
+          return;
+        }
 
-      setShowSuccessModal(true);
-      setLoading(false);
+        // Get user data from Firestore
+        const userDoc = await getUserDocument(result.user.uid);
+        
+        if (!userDoc.success || !userDoc.data) {
+          setError("User profile not found in database");
+          setLoading(false);
+          return;
+        }
 
-      // Redirect after 1 second
-      setTimeout(() => {
-        setShowSuccessModal(false);
-        onLogin("admin");
-      }, 1000);
-    } else {
-      setError("Invalid admin credentials. Please check your email and password.");
-      setLoading(false);
-    }
+        // Check if user is an admin
+        if (userDoc.data.role !== "admin") {
+          setError("Access denied. You do not have admin privileges.");
+          setLoading(false);
+          return;
+        }
+
+        // Save to localStorage
+        localStorage.setItem("currentUser", JSON.stringify(userDoc.data));
+
+        setShowSuccessModal(true);
+        
+        // Redirect after 1 second
+        setTimeout(() => {
+          setShowSuccessModal(false);
+          onLogin("admin");
+        }, 1000);
+      })
+      .catch((err) => {
+        console.error("[AdminAuth] Login error:", err);
+        setError("Login failed: " + err.message);
+        setLoading(false);
+      });
   };
 
   return (
@@ -120,16 +139,6 @@ export default function AdminAuth({ onLogin, onBackToRole }) {
               <p style={styles.modalMessage}>Welcome to the Admin Dashboard</p>
               <div style={styles.spinner}></div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* LOADING SCREEN */}
-      {loading && (
-        <div style={styles.loadingOverlay}>
-          <div style={styles.loadingContainer}>
-            <div style={styles.loadingSpinner}></div>
-            <p style={styles.loadingText}>Logging in...</p>
           </div>
         </div>
       )}

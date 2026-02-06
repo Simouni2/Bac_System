@@ -308,25 +308,6 @@ export default function Auth({ onLogin, onBackToRole }) {
         </div>
       )}
 
-      {/* LOADING MODAL */}
-      {loading && !showSuccessModal && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalContent}>
-            <div style={styles.modalHeader}>
-              <h2 style={{ margin: 0, color: "white" }}>Processing...</h2>
-            </div>
-            <div style={styles.modalBody}>
-              <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
-                <div style={styles.loadingSpinner}></div>
-              </div>
-              <p style={{ fontSize: 16, color: "#333", textAlign: "center" }}>
-                Submitting your account request...
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div style={styles.footer}>
         <button
           onClick={onBackToRole}

@@ -222,6 +222,48 @@ export default function UserDashboard({ files, setFiles }) {
     }
   }, [files]);
 
+  // ✅ LISTEN FOR STORAGE CHANGES (syncs data from admin dashboard)
+  useEffect(() => {
+    // Handle cross-tab storage changes
+    const handleStorageChange = (e) => {
+      if (e.key === "bacTeamMembers") {
+        const updated = localStorage.getItem("bacTeamMembers");
+        if (updated) {
+          setBacTeamMembers(JSON.parse(updated));
+          console.log("🔄 BAC Team Members updated from storage");
+        }
+      }
+      if (e.key === "docTemplates") {
+        const updated = localStorage.getItem("docTemplates");
+        if (updated) {
+          setDocTemplates(JSON.parse(updated));
+          console.log("🔄 Document Templates updated from storage");
+        }
+      }
+    };
+
+    // Handle same-tab custom events
+    const handleTeamMembersUpdated = (e) => {
+      setBacTeamMembers(e.detail);
+      console.log("🔄 BAC Team Members updated (same-tab)");
+    };
+
+    const handleDocTemplatesUpdated = (e) => {
+      setDocTemplates(e.detail);
+      console.log("🔄 Document Templates updated (same-tab)");
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("bacTeamMembersUpdated", handleTeamMembersUpdated);
+    window.addEventListener("docTemplatesUpdated", handleDocTemplatesUpdated);
+    
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("bacTeamMembersUpdated", handleTeamMembersUpdated);
+      window.removeEventListener("docTemplatesUpdated", handleDocTemplatesUpdated);
+    };
+  }, []);
+
   // ================= HELPERS =================
   const validate = () => {
     if (!department.trim()) {
