@@ -2525,6 +2525,8 @@ const styles = {
     boxShadow: "0 10px 40px rgba(0, 0, 0, 0.2)",
     minWidth: 450,
     maxWidth: 550,
+    maxHeight: "90vh",
+    overflowY: "auto",
   },
 
   fileModal: {
