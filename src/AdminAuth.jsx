@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { signIn } from "./firebase/authService";
 import { getUserDocument } from "./firebase/userService";
+import { Lock } from "lucide-react";
 
 const maroon = "#7a0019";
 
@@ -75,7 +76,9 @@ export default function AdminAuth({ onLogin, onBackToRole }) {
       
       <div style={styles.formCard}>
         <div style={styles.header}>
-          <div style={styles.adminIcon}>🔐</div>
+          <div style={{...styles.adminIcon, display: "flex", alignItems: "center", justifyContent: "center"}}>
+            <Lock size={40} color="white" strokeWidth={1.5} />
+          </div>
           <h1 style={styles.title}>BAC Records System</h1>
           <p style={styles.subtitle}>Admin Access Portal</p>
         </div>

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { adminCreateUser } from "./firebase/authService";
 import { createUserDocument, saveAccountRequest, getAllAccountRequests, updateAccountRequestStatus, getAllCreatedAccounts } from "./firebase/userService";
+import { Check, X, Clock, Trash2, AlertCircle, FileText } from "lucide-react";
 
 const maroon = "#7a0019";
 const PPMP_VERIFIER_EMAIL = "bacadmin@gmail.com";
@@ -30,6 +31,17 @@ export default function BACDashboard({ files, setFiles }) {
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sortOrder, setSortOrder] = useState("latest"); // latest | oldest
+  const [selectedFiles, setSelectedFiles] = useState(new Set());
+  const [selectedAccountRequests, setSelectedAccountRequests] = useState(new Set());
+  const [selectedCreatedAccounts, setSelectedCreatedAccounts] = useState(new Set());
+  const [createdAccountsCurrentPage, setCreatedAccountsCurrentPage] = useState(1);
+  const [createdAccountsItemsPerPage] = useState(10);
+  const [filesCurrentPage, setFilesCurrentPage] = useState(1);
+  const [filesItemsPerPage] = useState(10);
+  const [pendingCurrentPage, setPendingCurrentPage] = useState(1);
+  const [approvedCurrentPage, setApprovedCurrentPage] = useState(1);
+  const [declinedCurrentPage, setDeclinedCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
   const [showFileModal, setShowFileModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [showDeclineModal, setShowDeclineModal] = useState(false);
@@ -86,6 +98,31 @@ export default function BACDashboard({ files, setFiles }) {
     fileData: ""
   });
 
+  // PPMP OFFICE TEMPLATES STATES
+  const [ppmpOfficeTemplates, setPpmpOfficeTemplates] = useState(() => {
+    const saved = localStorage.getItem("ppmpOfficeTemplates");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showAddOfficeTemplateModal, setShowAddOfficeTemplateModal] = useState(false);
+  const [editingOfficeTemplateId, setEditingOfficeTemplateId] = useState(null);
+  const [officeTemplateForm, setOfficeTemplateForm] = useState({
+    officeName: "",
+    officeCode: "",
+    items: []
+  });
+  const [showDeleteOfficeTemplateModal, setShowDeleteOfficeTemplateModal] = useState(false);
+  const [officeTemplateToDelete, setOfficeTemplateToDelete] = useState(null);
+  const [showViewOfficeTemplateModal, setShowViewOfficeTemplateModal] = useState(false);
+  const [viewingOfficeTemplate, setViewingOfficeTemplate] = useState(null);
+
+  // PPMP USER INSTANCES - TRACKING ALL USER EDITS
+  const [ppmpUserInstances, setPpmpUserInstances] = useState(() => {
+    const saved = localStorage.getItem("ppmpUserInstances");
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [ppmpFilterOffice, setPpmpFilterOffice] = useState("all");
+  const [ppmpSortBy, setPpmpSortBy] = useState("lastUpdated"); // lastUpdated | office | user
+
   // ACCOUNT CREATION STATES
   const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
   const [createdAccounts, setCreatedAccounts] = useState([]);
@@ -96,6 +133,7 @@ export default function BACDashboard({ files, setFiles }) {
     password: "",
     confirmPassword: "",
     role: "user",
+    department: "",
     adminConfirm: false
   });
   const [accountError, setAccountError] = useState("");
@@ -108,6 +146,16 @@ export default function BACDashboard({ files, setFiles }) {
   const [isLoadingFromFirestore, setIsLoadingFromFirestore] = useState(false);
   const [showRejectConfirmModal, setShowRejectConfirmModal] = useState(false);
   const [requestToReject, setRequestToReject] = useState(null);
+  const [showApproveConfirmModal, setShowApproveConfirmModal] = useState(false);
+  const [requestToApprove, setRequestToApprove] = useState(null);
+  const [approvalsToProcess, setApprovalsToProcess] = useState(new Set());
+  const [approvalType, setApprovalType] = useState("single"); // single | bulk | quickAll
+  const [showRejectAllConfirmModal, setShowRejectAllConfirmModal] = useState(false);
+  const [rejectAllCount, setRejectAllCount] = useState(0);
+  const [showApproveFilesConfirmModal, setShowApproveFilesConfirmModal] = useState(false);
+  const [approveFilesCount, setApproveFilesCount] = useState(0);
+  const [showDeleteCreatedAccountsModal, setShowDeleteCreatedAccountsModal] = useState(false);
+  const [deleteCreatedAccountsCount, setDeleteCreatedAccountsCount] = useState(0);
   
   // Delete confirmation modals
   const [showDeleteTeamMemberModal, setShowDeleteTeamMemberModal] = useState(false);
@@ -121,6 +169,17 @@ export default function BACDashboard({ files, setFiles }) {
   useEffect(() => {
     console.log("📊 Admin - Files prop updated:", files?.length || 0, "files", files);
   }, [files]);
+
+  // ✅ CLEAR SELECTION WHEN VIEW CHANGES
+  useEffect(() => {
+    setSelectedFiles(new Set());
+    setSelectedAccountRequests(new Set());
+    setSelectedCreatedAccounts(new Set());
+    setFilesCurrentPage(1);
+    setPendingCurrentPage(1);
+    setApprovedCurrentPage(1);
+    setDeclinedCurrentPage(1);
+  }, [view]);
 
   // ✅ SYNC FILES TO LOCALSTORAGE ONLY (Firestore is the single source of truth)
   useEffect(() => {
@@ -261,6 +320,37 @@ export default function BACDashboard({ files, setFiles }) {
       }
     }
   }, [view]);
+
+  // ✅ PERSIST PPMP OFFICE TEMPLATES
+  useEffect(() => {
+    try {
+      localStorage.setItem("ppmpOfficeTemplates", JSON.stringify(ppmpOfficeTemplates));
+      console.log("💾 PPMP Office Templates saved:", ppmpOfficeTemplates.length);
+      window.dispatchEvent(new CustomEvent("ppmpOfficeTemplatesUpdated", { detail: ppmpOfficeTemplates }));
+    } catch (err) {
+      console.warn("⚠️ Could not save PPMP office templates:", err.message);
+    }
+  }, [ppmpOfficeTemplates]);
+
+  // ✅ PERSIST PPMP USER INSTANCES
+  useEffect(() => {
+    try {
+      localStorage.setItem("ppmpUserInstances", JSON.stringify(ppmpUserInstances));
+      console.log("💾 PPMP User Instances saved");
+    } catch (err) {
+      console.warn("⚠️ Could not save PPMP user instances:", err.message);
+    }
+  }, [ppmpUserInstances]);
+
+  // ✅ LISTEN FOR PPMP USER INSTANCE UPDATES FROM USERS
+  useEffect(() => {
+    const handleUserPPMPUpdate = (event) => {
+      setPpmpUserInstances(event.detail);
+      console.log("🔄 PPMP User Instances updated from user dashboard");
+    };
+    window.addEventListener("ppmpUserInstancesUpdated", handleUserPPMPUpdate);
+    return () => window.removeEventListener("ppmpUserInstancesUpdated", handleUserPPMPUpdate);
+  }, []);
 
   // ✅ PERSIST ACCOUNT REQUESTS
   useEffect(() => {
@@ -464,7 +554,7 @@ export default function BACDashboard({ files, setFiles }) {
     setAccountLoading(true);
 
     // Validation
-    if (!accountForm.firstName.trim() || !accountForm.lastName.trim() || !accountForm.email.trim() || !accountForm.password.trim()) {
+    if (!accountForm.firstName.trim() || !accountForm.lastName.trim() || !accountForm.email.trim() || !accountForm.password.trim() || !accountForm.department.trim()) {
       setAccountError("All fields are required");
       setAccountLoading(false);
       return;
@@ -512,6 +602,7 @@ export default function BACDashboard({ files, setFiles }) {
         displayName: `${accountForm.firstName} ${accountForm.lastName}`,
         firstName: accountForm.firstName.trim(),
         lastName: accountForm.lastName.trim(),
+        department: normalizeDepartment(accountForm.department.trim()),
         role: accountForm.role,
         createdAt: new Date().toISOString(),
         createdBy: currentUser?.email || "admin"
@@ -546,7 +637,7 @@ export default function BACDashboard({ files, setFiles }) {
       }
 
       // Show success
-      setSuccessMessage(`Account created successfully for ${accountForm.firstName} ${accountForm.lastName}! Email: ${accountForm.email}`);
+      setSuccessMessage(`Account created successfully for ${accountForm.firstName} ${accountForm.lastName}! Email: ${accountForm.email} | Department: ${normalizeDepartment(accountForm.department)}`);
       setShowSuccessModal(true);
 
       // Reset form
@@ -556,7 +647,8 @@ export default function BACDashboard({ files, setFiles }) {
         email: "",
         password: "",
         confirmPassword: "",
-        role: "user"
+        role: "user",
+        department: ""
       });
       setShowCreateAccountModal(false);
       setSelectedRequestId(null);
@@ -591,17 +683,45 @@ export default function BACDashboard({ files, setFiles }) {
   };
 
   const handleApproveRequest = (requestId) => {
-    const updatedRequests = accountRequests.map(req => 
-      req.id === requestId ? { ...req, status: "approved", approvedDate: new Date().toISOString() } : req
-    );
-    setAccountRequests(updatedRequests);
-    localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+    const request = accountRequests.find(req => req.id === requestId);
+    setRequestToApprove(request);
+    setApprovalsToProcess(new Set([requestId]));
+    setApprovalType("single");
+    setShowApproveConfirmModal(true);
+  };
+
+  const confirmApproveRequest = () => {
+    setIsLoading(true);
+    setLoadingMessage("Approving request...");
     
-    // Also update in Firestore
-    updateAccountRequestStatus(requestId, "approved");
-    
-    setSuccessMessage("Account request approved!");
-    setShowSuccessModal(true);
+    setTimeout(() => {
+      const updatedRequests = accountRequests.map(req => 
+        approvalsToProcess.has(req.id) ? { ...req, status: "approved", approvedDate: new Date().toISOString() } : req
+      );
+      setAccountRequests(updatedRequests);
+      localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+      
+      // Update each request in Firestore
+      Array.from(approvalsToProcess).forEach(requestId => {
+        updateAccountRequestStatus(requestId, "approved");
+      });
+      
+      setIsLoading(false);
+      setLoadingMessage("Processing...");
+      setShowApproveConfirmModal(false);
+      setRequestToApprove(null);
+      setApprovalsToProcess(new Set());
+      
+      const count = approvalsToProcess.size;
+      setSuccessMessage(count === 1 ? "Account request approved!" : `${count} account request(s) approved successfully!`);
+      setShowSuccessModal(true);
+    }, 800);
+  };
+
+  const cancelApproveRequest = () => {
+    setShowApproveConfirmModal(false);
+    setRequestToApprove(null);
+    setApprovalsToProcess(new Set());
   };
 
   const handleRejectRequest = (requestId) => {
@@ -612,19 +732,26 @@ export default function BACDashboard({ files, setFiles }) {
 
   const confirmRejectRequest = () => {
     if (requestToReject) {
-      const updatedRequests = accountRequests.map(req => 
-        req.id === requestToReject.id ? { ...req, status: "declined", declinedDate: new Date().toISOString() } : req
-      );
-      setAccountRequests(updatedRequests);
-      localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+      setIsLoading(true);
+      setLoadingMessage("Rejecting request...");
       
-      // Also update in Firestore
-      updateAccountRequestStatus(requestToReject.id, "declined");
-      
-      setSuccessMessage("Account request declined.");
-      setShowSuccessModal(true);
-      setShowRejectConfirmModal(false);
-      setRequestToReject(null);
+      setTimeout(() => {
+        const updatedRequests = accountRequests.map(req => 
+          req.id === requestToReject.id ? { ...req, status: "declined", declinedDate: new Date().toISOString() } : req
+        );
+        setAccountRequests(updatedRequests);
+        localStorage.setItem("accountRequests", JSON.stringify(updatedRequests));
+        
+        // Also update in Firestore
+        updateAccountRequestStatus(requestToReject.id, "declined");
+        
+        setIsLoading(false);
+        setLoadingMessage("Processing...");
+        setSuccessMessage("Account request declined.");
+        setShowSuccessModal(true);
+        setShowRejectConfirmModal(false);
+        setRequestToReject(null);
+      }, 800);
     }
   };
 
@@ -664,6 +791,11 @@ export default function BACDashboard({ files, setFiles }) {
       return;
     }
     
+    // Check if this is bulk decline (selectedFileIndex === -1)
+    if (selectedFileIndex === -1) {
+      return submitBulkDecline();
+    }
+    
     setIsLoading(true);
     setLoadingMessage("Declining file...");
     
@@ -687,6 +819,328 @@ export default function BACDashboard({ files, setFiles }) {
       setShowSuccessModal(true);
     }, 1000);
     setDeclineReason("");
+  };
+
+  /* ===== BULK ACTION HANDLERS ===== */
+  const handleSelectFile = (fileIndex) => {
+    const newSelected = new Set(selectedFiles);
+    if (newSelected.has(fileIndex)) {
+      newSelected.delete(fileIndex);
+    } else {
+      newSelected.add(fileIndex);
+    }
+    setSelectedFiles(newSelected);
+  };
+
+  const handleSelectAll = (shouldSelect) => {
+    if (shouldSelect) {
+      const allIndices = new Set();
+      const filesToShow = view === "dashboard" ? activeFiles : archivedFiles;
+      filesToShow.forEach(f => {
+        const idx = files.indexOf(f);
+        if (idx !== -1) allIndices.add(idx);
+      });
+      setSelectedFiles(allIndices);
+    } else {
+      setSelectedFiles(new Set());
+    }
+  };
+
+  const handleBulkApprove = () => {
+    if (selectedFiles.size === 0) {
+      alert("Please select files to approve.");
+      return;
+    }
+
+    let approveCount = 0;
+    selectedFiles.forEach(index => {
+      if (files[index] && files[index].status === "Pending") {
+        approveCount++;
+      }
+    });
+    
+    setApproveFilesCount(approveCount);
+    setShowApproveFilesConfirmModal(true);
+  };
+
+  const confirmApproveFiles = () => {
+    setIsLoading(true);
+    setLoadingMessage("Approving selected files...");
+    
+    setTimeout(() => {
+      const updated = [...files];
+      let approvedCount = 0;
+      
+      selectedFiles.forEach(index => {
+        if (updated[index] && updated[index].status === "Pending") {
+          updated[index] = { ...updated[index], status: "Approved" };
+          approvedCount++;
+        }
+      });
+      
+      setFiles(updated);
+      setIsLoading(false);
+      setLoadingMessage("Processing...");
+      setSelectedFiles(new Set());
+      setShowApproveFilesConfirmModal(false);
+      
+      setSuccessMessage(`${approvedCount} file(s) approved successfully!`);
+      setShowSuccessModal(true);
+    }, 800);
+  };
+
+  const cancelApproveFiles = () => {
+    setShowApproveFilesConfirmModal(false);
+    setApproveFilesCount(0);
+  };
+
+  const handleBulkDecline = () => {
+    if (selectedFiles.size === 0) {
+      alert("Please select files to decline.");
+      return;
+    }
+
+    setSelectedFileIndex(-1); // Special marker for bulk decline
+    setShowDeclineModal(true);
+  };
+
+  const submitBulkDecline = () => {
+    if (!declineReason.trim()) {
+      alert("Please enter a reason for declining.");
+      return;
+    }
+    
+    setIsLoading(true);
+    setLoadingMessage("Declining selected files...");
+    
+    setTimeout(() => {
+      const updated = [...files];
+      let declinedCount = 0;
+      
+      selectedFiles.forEach(index => {
+        if (updated[index] && updated[index].status === "Pending") {
+          updated[index] = { 
+            ...updated[index], 
+            status: "Declined",
+            declineReason: declineReason 
+          };
+          declinedCount++;
+        }
+      });
+      
+      setFiles(updated);
+      setShowDeclineModal(false);
+      setDeclineReason("");
+      setSelectedFileIndex(null);
+      setIsLoading(false);
+      setLoadingMessage("Processing...");
+      setSelectedFiles(new Set());
+      
+      setSuccessMessage(`${declinedCount} file(s) declined successfully!`);
+      setShowSuccessModal(true);
+    }, 1000);
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedFiles.size === 0) {
+      alert("Please select files to delete.");
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to delete ${selectedFiles.size} file(s)? This action cannot be undone.`)) {
+      setIsLoading(true);
+      setLoadingMessage("Deleting selected files...");
+      
+      setTimeout(() => {
+        const updated = files.filter((f, idx) => !selectedFiles.has(idx));
+        setFiles(updated);
+        setIsLoading(false);
+        setLoadingMessage("Processing...");
+        setSelectedFiles(new Set());
+        
+        setSuccessMessage(`${selectedFiles.size} file(s) deleted successfully!`);
+        setShowSuccessModal(true);
+      }, 1000);
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedFiles(new Set());
+  };
+
+  /* ===== ACCOUNT REQUEST SELECTION HANDLERS ===== */
+  const handleSelectAccountRequest = (requestId) => {
+    const newSelected = new Set(selectedAccountRequests);
+    if (newSelected.has(requestId)) {
+      newSelected.delete(requestId);
+    } else {
+      newSelected.add(requestId);
+    }
+    setSelectedAccountRequests(newSelected);
+  };
+
+  const handleSelectAllAccountRequests = (shouldSelect) => {
+    if (shouldSelect) {
+      const pendingRequests = accountRequests.filter(req => !req.status || req.status === "pending");
+      setSelectedAccountRequests(new Set(pendingRequests.map(r => r.id)));
+    } else {
+      setSelectedAccountRequests(new Set());
+    }
+  };
+
+  const handleBulkApproveAccountRequests = () => {
+    if (selectedAccountRequests.size === 0) {
+      alert("Please select account requests to approve.");
+      return;
+    }
+
+    setApprovalsToProcess(new Set(selectedAccountRequests));
+    setApprovalType("bulk");
+    setShowApproveConfirmModal(true);
+  };
+
+  const handleBulkRejectAccountRequests = () => {
+    if (selectedAccountRequests.size === 0) {
+      alert("Please select account requests to reject.");
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to reject ${selectedAccountRequests.size} account request(s)?`)) {
+      setIsLoading(true);
+      setLoadingMessage("Rejecting selected requests...");
+      
+      setTimeout(() => {
+        const updated = accountRequests.map(req => 
+          selectedAccountRequests.has(req.id) ? { ...req, status: "declined", declinedDate: new Date().toISOString() } : req
+        );
+        setAccountRequests(updated);
+        localStorage.setItem("accountRequests", JSON.stringify(updated));
+        
+        // Update each request in Firestore
+        Array.from(selectedAccountRequests).forEach(requestId => {
+          updateAccountRequestStatus(requestId, "declined");
+        });
+        
+        setIsLoading(false);
+        setLoadingMessage("Processing...");
+        setSelectedAccountRequests(new Set());
+        
+        setSuccessMessage(`${selectedAccountRequests.size} account request(s) rejected successfully!`);
+        setShowSuccessModal(true);
+      }, 800);
+    }
+  };
+
+  /* ===== CREATED ACCOUNT SELECTION HANDLERS ===== */
+  const handleSelectCreatedAccount = (accountId) => {
+    const newSelected = new Set(selectedCreatedAccounts);
+    if (newSelected.has(accountId)) {
+      newSelected.delete(accountId);
+    } else {
+      newSelected.add(accountId);
+    }
+    setSelectedCreatedAccounts(newSelected);
+  };
+
+  const handleSelectAllCreatedAccounts = (shouldSelect) => {
+    if (shouldSelect) {
+      setSelectedCreatedAccounts(new Set(createdAccounts.map(a => a.id)));
+    } else {
+      setSelectedCreatedAccounts(new Set());
+    }
+  };
+
+  const handleBulkDeleteCreatedAccounts = () => {
+    if (selectedCreatedAccounts.size === 0) {
+      alert("Please select accounts to delete.");
+      return;
+    }
+
+    setDeleteCreatedAccountsCount(selectedCreatedAccounts.size);
+    setShowDeleteCreatedAccountsModal(true);
+  };
+
+  const confirmDeleteCreatedAccounts = () => {
+    const countToDelete = selectedCreatedAccounts.size;
+    
+    setIsLoading(true);
+    setLoadingMessage("Deleting selected accounts...");
+    
+    setTimeout(() => {
+      const updated = createdAccounts.filter(a => !selectedCreatedAccounts.has(a.id));
+      setCreatedAccounts(updated);
+      setIsLoading(false);
+      setLoadingMessage("Processing...");
+      setSelectedCreatedAccounts(new Set());
+      setShowDeleteCreatedAccountsModal(false);
+      setDeleteCreatedAccountsCount(0);
+      
+      setSuccessMessage(`${countToDelete} account(s) deleted successfully!`);
+      setShowSuccessModal(true);
+    }, 800);
+  };
+
+  const cancelDeleteCreatedAccounts = () => {
+    setShowDeleteCreatedAccountsModal(false);
+    setDeleteCreatedAccountsCount(0);
+  };
+
+  /* ===== QUICK APPROVE/REJECT ALL FOR ACCOUNT REQUESTS ===== */
+  const handleQuickApproveAll = () => {
+    const pendingRequests = accountRequests.filter(req => !req.status || req.status === "pending");
+    if (pendingRequests.length === 0) {
+      alert("No pending account requests to approve.");
+      return;
+    }
+
+    setApprovalsToProcess(new Set(pendingRequests.map(r => r.id)));
+    setApprovalType("quickAll");
+    setShowApproveConfirmModal(true);
+  };
+
+  const handleQuickRejectAll = () => {
+    const pendingRequests = accountRequests.filter(req => !req.status || req.status === "pending");
+    if (pendingRequests.length === 0) {
+      alert("No pending account requests to reject.");
+      return;
+    }
+
+    setRejectAllCount(pendingRequests.length);
+    setShowRejectAllConfirmModal(true);
+  };
+
+  const confirmRejectAll = () => {
+    const pendingRequests = accountRequests.filter(req => !req.status || req.status === "pending");
+    
+    setIsLoading(true);
+    setLoadingMessage("Rejecting all pending requests...");
+    
+    setTimeout(() => {
+      const updated = accountRequests.map(req => 
+        (!req.status || req.status === "pending") ? { ...req, status: "declined", declinedDate: new Date().toISOString() } : req
+      );
+      setAccountRequests(updated);
+      localStorage.setItem("accountRequests", JSON.stringify(updated));
+      
+      // Update each pending request in Firestore
+      pendingRequests.forEach(req => {
+        updateAccountRequestStatus(req.id, "declined");
+      });
+      
+      setIsLoading(false);
+      setLoadingMessage("Processing...");
+      setSelectedAccountRequests(new Set());
+      setShowRejectAllConfirmModal(false);
+      setRejectAllCount(0);
+      
+      setSuccessMessage(`${pendingRequests.length} account request(s) rejected successfully!`);
+      setShowSuccessModal(true);
+    }, 800);
+  };
+
+  const cancelRejectAll = () => {
+    setShowRejectAllConfirmModal(false);
+    setRejectAllCount(0);
   };
 
   /* ===== SUMMARY COUNTS ===== */
@@ -799,6 +1253,16 @@ export default function BACDashboard({ files, setFiles }) {
         </div>
       )}
 
+      {/* ACCOUNT CREATION LOADING MODAL */}
+      {accountLoading && (
+        <div style={styles.loadingOverlay}>
+          <div style={styles.loadingContainer}>
+            <div style={styles.loadingSpinner}></div>
+            <p style={styles.loadingText}>Creating account...</p>
+          </div>
+        </div>
+      )}
+
       {/* ===== SIDEBAR ===== */}
       <aside style={styles.sidebar}>
         <div style={styles.logoBox}>
@@ -862,10 +1326,10 @@ export default function BACDashboard({ files, setFiles }) {
           </div>
 
           <div
-            style={view === "ppmp" ? styles.navActive : styles.nav}
-            onClick={() => setView("ppmp")}
+            style={view === "ppmpOfficeTemplates" ? styles.navActive : styles.nav}
+            onClick={() => setView("ppmpOfficeTemplates")}
           >
-             PPMP Management
+             PPMP Office Templates
           </div>
 
           <div
@@ -893,14 +1357,16 @@ export default function BACDashboard({ files, setFiles }) {
               ? "Archived Documents"
               : view === "department"
               ? "Files by Department"
-              : view === "ppmp"
-              ? "PPMP Management"
+              : view === "ppmpOfficeTemplates"
+              ? "PPMP Office Templates"
               : view === "editAboutBac"
               ? "Edit About BAC"
               : view === "editDocTemplates"
               ? "Edit Documents Template"
               : view === "createAccount"
               ? "Create User Account"
+              : view === "accountRequests"
+              ? "Account Requests"
               : view === "analytics"
               ? "Analytics & Reports"
               : "File Compilation Dashboard"}
@@ -911,15 +1377,15 @@ export default function BACDashboard({ files, setFiles }) {
         {/* SUMMARY CARDS (Dashboard only) */}
         {view === "dashboard" && (
           <div style={styles.cards}>
-            <div style={styles.card}><h4>Total Files</h4><p>{totalFiles}</p></div>
-            <div style={styles.card}><h4>Pending</h4><p>{pendingCount}</p></div>
-            <div style={styles.card}><h4>Approved</h4><p>{approvedCount}</p></div>
-            <div style={styles.card}><h4>Archived</h4><p>{archivedCount}</p></div>
+            <div style={styles.card}><h4 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Total Files</h4><p style={{ fontSize: 28, fontWeight: 700, color: maroon, margin: 0 }}>{totalFiles}</p></div>
+            <div style={styles.card}><h4 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Pending</h4><p style={{ fontSize: 28, fontWeight: 700, color: maroon, margin: 0 }}>{pendingCount}</p></div>
+            <div style={styles.card}><h4 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Approved</h4><p style={{ fontSize: 28, fontWeight: 700, color: maroon, margin: 0 }}>{approvedCount}</p></div>
+            <div style={styles.card}><h4 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Archived</h4><p style={{ fontSize: 28, fontWeight: 700, color: maroon, margin: 0 }}>{archivedCount}</p></div>
           </div>
         )}
 
-        {/* FILTER BAR - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, Create Account, Account Requests, or Analytics view */}
-        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "createAccount" && view !== "accountRequests" && view !== "analytics" && view !== "pendingRequests" && view !== "approvedRequests" && view !== "declinedRequests" && (
+        {/* FILTER BAR - Not shown in Department, PPMP Management, PPMP Office Templates, Edit About BAC, Edit Document Template, Create Account, Account Requests, or Analytics view */}
+        {view !== "department" && view !== "ppmp" && view !== "ppmpOfficeTemplates" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "createAccount" && view !== "accountRequests" && view !== "analytics" && view !== "pendingRequests" && view !== "approvedRequests" && view !== "declinedRequests" && (
         <div style={styles.filterBar}>
           <input
             style={styles.input}
@@ -972,41 +1438,160 @@ export default function BACDashboard({ files, setFiles }) {
         </div>
         )}
 
-        {/* TABLE - Not shown in Department, PPMP Management, Edit About BAC, Edit Document Template, Create Account, Account Requests, or Analytics view */}
-        {view !== "department" && view !== "ppmp" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "createAccount" && view !== "accountRequests" && view !== "analytics" && view !== "pendingRequests" && view !== "approvedRequests" && view !== "declinedRequests" && (
+        {/* TABLE - Not shown in Department, PPMP Management, PPMP Office Templates, Edit About BAC, Edit Document Template, Create Account, Account Requests, or Analytics view */}
+        {view !== "department" && view !== "ppmp" && view !== "ppmpOfficeTemplates" && view !== "editAboutBac" && view !== "editDocTemplates" && view !== "createAccount" && view !== "accountRequests" && view !== "analytics" && view !== "pendingRequests" && view !== "approvedRequests" && view !== "declinedRequests" && (
         <div style={styles.tableBox}>
+          {/* BULK ACTIONS BAR */}
+          {selectedFiles.size > 0 && (
+            <div style={{
+              background: "#f0f3f7",
+              border: `2px solid ${maroon}`,
+              borderRadius: 8,
+              padding: 16,
+              marginBottom: 20,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 20
+            }}>
+              <div style={{ fontWeight: 600, color: "#333" }}>
+                {selectedFiles.size} file(s) selected
+              </div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  style={{
+                    background: "#22c55e",
+                    color: "white",
+                    padding: "10px 18px",
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    transition: "0.2s"
+                  }}
+                  onClick={handleBulkApprove}
+                  onMouseEnter={(e) => e.target.style.background = "#16a34a"}
+                  onMouseLeave={(e) => e.target.style.background = "#22c55e"}
+                >
+                  Approve All
+                </button>
+                <button
+                  style={{
+                    background: "#f59e0b",
+                    color: "white",
+                    padding: "10px 18px",
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    transition: "0.2s"
+                  }}
+                  onClick={handleBulkDecline}
+                  onMouseEnter={(e) => e.target.style.background = "#d97706"}
+                  onMouseLeave={(e) => e.target.style.background = "#f59e0b"}
+                >
+                  Decline All
+                </button>
+                {/* <button
+                  style={{
+                    background: "#ef4444",
+                    color: "white",
+                    padding: "10px 18px",
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    transition: "0.2s"
+                  }}
+                  onClick={handleBulkDelete}
+                  onMouseEnter={(e) => e.target.style.background = "#dc2626"}
+                  onMouseLeave={(e) => e.target.style.background = "#ef4444"}
+                >
+                  Delete All
+                </button> */}
+                <button
+                  style={{
+                    background: "#e5e7eb",
+                    color: "#333",
+                    padding: "10px 18px",
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    transition: "0.2s"
+                  }}
+                  onClick={clearSelection}
+                  onMouseEnter={(e) => e.target.style.background = "#d1d5db"}
+                  onMouseLeave={(e) => e.target.style.background = "#e5e7eb"}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
           <table style={styles.table}>
             <thead>
-              <tr>
-                <th>File Name</th>
-                <th>Department</th>
-                <th>Type</th>
-                <th>Date</th>
-                <th>Time Submitted</th>
-                <th>Status</th>
-                <th>Action</th>
+              <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #e9ecef" }}>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "center", width: "40px" }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedFiles.size > 0 && selectedFiles.size === (view === "dashboard" ? activeFiles : archivedFiles).length}
+                    onChange={(e) => handleSelectAll(e.target.checked)}
+                    style={{ cursor: "pointer", width: 18, height: 18 }}
+                  />
+                </th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>File Name</th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Department</th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Requesting User</th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Type</th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Date</th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Time Submitted</th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "center" }}>Status</th>
+                <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "center" }}>Action</th>
               </tr>
             </thead>
 
             <tbody>
-              {(view === "dashboard" ? activeFiles : archivedFiles).length === 0 ? (
-                <tr>
-                  <td colSpan="6" style={{ textAlign: "center", padding: 20 }}>
-                    No records found
-                  </td>
-                </tr>
-              ) : (
-                (view === "dashboard" ? activeFiles : archivedFiles).map((f, i) => {
+              {(() => {
+                const filesToDisplay = view === "dashboard" ? activeFiles : archivedFiles;
+                const startIdx = (filesCurrentPage - 1) * filesItemsPerPage;
+                const endIdx = startIdx + filesItemsPerPage;
+                const paginatedFiles = filesToDisplay.slice(startIdx, endIdx);
+                
+                if (paginatedFiles.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan="9" style={{ textAlign: "center", padding: 24 }}>
+                        No records found
+                      </td>
+                    </tr>
+                  );
+                }
+                
+                return paginatedFiles.map((f, i) => {
                   const realIndex = files.indexOf(f);
 
                   return (
-                    <tr key={i}>
-                      <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
-                      <td>{f.department}</td>
-                      <td>{f.type}</td>
-                      <td>{f.date}</td>
-                      <td>{f.time || "N/A"}</td>
-                      <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
+                    <tr key={i} style={{ borderBottom: "1px solid #f0f0f0", backgroundColor: selectedFiles.has(realIndex) ? "#f0f3f7" : "transparent" }}>
+                      <td style={{ padding: "16px 14px", textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedFiles.has(realIndex)}
+                          onChange={() => handleSelectFile(realIndex)}
+                          style={{ cursor: "pointer", width: 18, height: 18 }}
+                        />
+                      </td>
+                      <td style={{ padding: "16px 14px", cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
+                      <td style={{ padding: "16px 14px" }}>{f.department}</td>
+                      <td style={{ padding: "16px 14px" }}>{f.requestingUser || "N/A"}</td>
+                      <td style={{ padding: "16px 14px" }}>{f.type}</td>
+                      <td style={{ padding: "16px 14px" }}>{f.date}</td>
+                      <td style={{ padding: "16px 14px" }}>{f.time || "N/A"}</td>
+                      <td style={{ padding: "16px 14px", textAlign: "center" }}>
                         <span
                           style={
                             f.status === "Approved"
@@ -1091,9 +1676,56 @@ export default function BACDashboard({ files, setFiles }) {
                     </tr>
                   );
                 })
-              )}
+              })()} 
             </tbody>
           </table>
+
+          {/* FILES PAGINATION CONTROLS */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 16, borderTop: "1px solid #e9ecef" }}>
+            <div style={{ fontSize: 13, color: "#666" }}>
+              Page {filesCurrentPage} of {Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage)} • Showing {Math.min((filesCurrentPage - 1) * filesItemsPerPage + 1, (view === "dashboard" ? activeFiles : archivedFiles).length)}-{Math.min(filesCurrentPage * filesItemsPerPage, (view === "dashboard" ? activeFiles : archivedFiles).length)} of {(view === "dashboard" ? activeFiles : archivedFiles).length}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                style={{
+                  background: filesCurrentPage === 1 ? "#e5e7eb" : "#ffffff",
+                  color: filesCurrentPage === 1 ? "#999" : "#333",
+                  padding: "8px 12px",
+                  border: "1px solid #ddd",
+                  borderRadius: 6,
+                  cursor: filesCurrentPage === 1 ? "not-allowed" : "pointer",
+                  fontWeight: 600,
+                  fontSize: 12,
+                  transition: "0.2s"
+                }}
+                onClick={() => filesCurrentPage > 1 && setFilesCurrentPage(filesCurrentPage - 1)}
+                disabled={filesCurrentPage === 1}
+                onMouseEnter={(e) => { if (filesCurrentPage > 1) e.target.style.background = "#f3f4f6"; }}
+                onMouseLeave={(e) => { if (filesCurrentPage > 1) e.target.style.background = "#ffffff"; }}
+              >
+                ← Previous
+              </button>
+              <button
+                style={{
+                  background: filesCurrentPage >= Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage) ? "#e5e7eb" : "#ffffff",
+                  color: filesCurrentPage >= Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage) ? "#999" : "#333",
+                  padding: "8px 12px",
+                  border: "1px solid #ddd",
+                  borderRadius: 6,
+                  cursor: filesCurrentPage >= Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage) ? "not-allowed" : "pointer",
+                  fontWeight: 600,
+                  fontSize: 12,
+                  transition: "0.2s"
+                }}
+                onClick={() => filesCurrentPage < Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage) && setFilesCurrentPage(filesCurrentPage + 1)}
+                disabled={filesCurrentPage >= Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage)}
+                onMouseEnter={(e) => { if (filesCurrentPage < Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage)) e.target.style.background = "#f3f4f6"; }}
+                onMouseLeave={(e) => { if (filesCurrentPage < Math.ceil((view === "dashboard" ? activeFiles : archivedFiles).length / filesItemsPerPage)) e.target.style.background = "#ffffff"; }}
+              >
+                Next →
+              </button>
+            </div>
+          </div>
         </div>
         )}
 
@@ -1129,11 +1761,12 @@ export default function BACDashboard({ files, setFiles }) {
                   {/* APPROVED FILES */}
                   {approvedFiles.length > 0 && (
                     <div style={styles.deptSubsection}>
-                      <h4 style={styles.statusHeader}>✓ Approved ({approvedFiles.length})</h4>
+                      <h4 style={{...styles.statusHeader, display: "flex", alignItems: "center", gap: 8}}><Check size={18} strokeWidth={2.5} /> Approved ({approvedFiles.length})</h4>
                       <table style={styles.deptTable}>
                         <thead>
                           <tr>
                             <th>File Name</th>
+                            <th>Requesting User</th>
                             <th>Date Submitted</th>
                             <th>Time Submitted</th>
                             <th>Action</th>
@@ -1143,6 +1776,7 @@ export default function BACDashboard({ files, setFiles }) {
                           {approvedFiles.map((file, idx) => (
                             <tr key={idx}>
                               <td style={styles.fileName}>{file.name}</td>
+                              <td>{file.requestingUser || "N/A"}</td>
                               <td>{file.date}</td>
                               <td>{file.time || "N/A"}</td>
                               <td style={{ textAlign: "center" }}>
@@ -1168,6 +1802,7 @@ export default function BACDashboard({ files, setFiles }) {
                         <thead>
                           <tr>
                             <th>File Name</th>
+                            <th>Requesting User</th>
                             <th>Date Submitted</th>
                             <th>Reason</th>
                             <th>Action</th>
@@ -1177,6 +1812,7 @@ export default function BACDashboard({ files, setFiles }) {
                           {declinedFiles.map((file, idx) => (
                             <tr key={idx}>
                               <td style={styles.fileName}>{file.name}</td>
+                              <td>{file.requestingUser || "N/A"}</td>
                               <td>{file.date}</td>
                               <td style={{ fontSize: "12px", color: "#666" }}>{file.declineReason || "N/A"}</td>
                               <td style={{ textAlign: "center" }}>
@@ -1202,199 +1838,305 @@ export default function BACDashboard({ files, setFiles }) {
         )}
 
         {/* PPMP MANAGEMENT VIEW */}
-        {view === "ppmp" && (
+
+
+        {/* PPMP OFFICE TEMPLATES VIEW */}
+        {view === "ppmpOfficeTemplates" && (
           <>
-            {/* ADD NEW DEPARTMENT SECTION - Only show if current user is an admin */}
-            {currentUser?.role === "admin" && (
+            {/* ADD NEW OFFICE TEMPLATE SECTION */}
             <div style={styles.card}>
-              <h3>Add PPMP Department</h3>
+              <h3>Create New Office PPMP Template</h3>
               <p style={styles.cardDescription}>
-                Create new PPMP departments that users can track in their PPMP Status page.
+                Create a template structure for a specific office. Users from that office will add and manage PPMP items.
               </p>
-              <div style={styles.ppmpInputContainer}>
-                <input
-                  type="text"
-                  placeholder="Enter department name (e.g., Finance, HR, Registrar)"
-                  value={newDepartmentName}
-                  onChange={(e) => setNewDepartmentName(e.target.value)}
-                  style={styles.ppmpInput}
-                />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px" }}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Office Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Registrar, Finance, HR"
+                    value={officeTemplateForm.officeName}
+                    onChange={(e) => setOfficeTemplateForm({ ...officeTemplateForm, officeName: e.target.value })}
+                    style={styles.input}
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Office Code *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., registrar, finance, hr"
+                    value={officeTemplateForm.officeCode}
+                    onChange={(e) => setOfficeTemplateForm({ ...officeTemplateForm, officeCode: e.target.value.toLowerCase() })}
+                    style={styles.input}
+                  />
+                </div>
+              </div>
+              <button
+                style={styles.button}
+                onClick={() => {
+                  if (!officeTemplateForm.officeName.trim() || !officeTemplateForm.officeCode.trim()) {
+                    alert("Please fill in both office name and code");
+                    return;
+                  }
+
+                  if (editingOfficeTemplateId !== null) {
+                    // Update existing template
+                    const updated = ppmpOfficeTemplates.map(t =>
+                      t.id === editingOfficeTemplateId ? { ...officeTemplateForm, id: editingOfficeTemplateId } : t
+                    );
+                    setPpmpOfficeTemplates(updated);
+                    setSuccessMessage("Office template updated successfully!");
+                    setEditingOfficeTemplateId(null);
+                  } else {
+                    // Add new template
+                    const newTemplate = {
+                      id: Date.now(),
+                      ...officeTemplateForm,
+                      createdAt: new Date().toISOString(),
+                      items: []
+                    };
+                    setPpmpOfficeTemplates([...ppmpOfficeTemplates, newTemplate]);
+                    setSuccessMessage("Office template created successfully!");
+                  }
+
+                  setOfficeTemplateForm({ officeName: "", officeCode: "", items: [] });
+                  setSelectedOfficeTemplateId(null);
+                  setShowSuccessModal(true);
+                }}
+              >
+                {editingOfficeTemplateId ? "✓ Update Template" : "+ Create Template"}
+              </button>
+              {editingOfficeTemplateId && (
                 <button
-                  style={styles.ppmpAddButton}
+                  style={{ ...styles.button, background: "#6b7280", marginTop: 10 }}
                   onClick={() => {
-                    if (newDepartmentName.trim()) {
-                      const normalized = newDepartmentName.charAt(0).toUpperCase() + newDepartmentName.slice(1).toLowerCase();
-                      if (!ppmpDepartments.includes(normalized)) {
-                        const updated = [...ppmpDepartments, normalized];
-                        setPpmpDepartments(updated);
-                        localStorage.setItem("ppmpDepartments", JSON.stringify(updated));
-                        
-                        // Update all existing users with this department
-                        const updatedStatuses = { ...userPPMPStatuses };
-                        setNewDepartmentName("");
-                        setShowSuccessModal(true);
-                        setSuccessMessage(`Department "${normalized}" has been added successfully!`);
-                      } else {
-                        alert("This department already exists!");
-                      }
-                    }
+                    setOfficeTemplateForm({ officeName: "", officeCode: "", items: [] });
+                    setEditingOfficeTemplateId(null);
                   }}
                 >
-                  + Add Department
+                  ✕ Cancel Edit
                 </button>
-              </div>
+              )}
             </div>
-            )}
 
-            {/* EXISTING DEPARTMENTS LIST */}
-            {currentUser?.role === "admin" && ppmpDepartments.length > 0 && (
+            {/* EXISTING OFFICE TEMPLATES LIST */}
+            {ppmpOfficeTemplates.length > 0 && (
               <div style={styles.card}>
-                <h3>Active PPMP Departments</h3>
-                <div style={styles.ppmpDeptGrid}>
-                  {ppmpDepartments.map((dept) => (
-                    <div key={dept} style={styles.ppmpDeptTag}>
-                      <span>{dept}</span>
-                      <button
-                        style={styles.ppmpRemoveBtn}
-                        onClick={() => {
-                          const updated = ppmpDepartments.filter(d => d !== dept);
-                          setPpmpDepartments(updated);
-                          localStorage.setItem("ppmpDepartments", JSON.stringify(updated));
-                        }}
-                      >
-                        ✕
-                      </button>
+                <h3>Office PPMP Templates ({ppmpOfficeTemplates.length})</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
+                  {ppmpOfficeTemplates.map((template) => (
+                    <div key={template.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 16, backgroundColor: "#f9fafb" }}>
+                      <div style={{ marginBottom: 12 }}>
+                        <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: maroon }}>{template.officeName}</h4>
+                        <p style={{ margin: "4px 0 0", fontSize: 12, color: "#666" }}>Code: {template.officeCode}</p>
+                      </div>
+
+                      <div style={{ marginBottom: 12, fontSize: 13, color: "#666" }}>
+                        <strong>{template.items.length}</strong> PPMP Items
+                      </div>
+
+                      {/* ITEMS LIST */}
+                      {template.items.length > 0 && (
+                        <div style={{ marginBottom: 12, maxHeight: 200, overflowY: "auto", backgroundColor: "white", padding: 8, borderRadius: 4, border: "1px solid #e5e7eb" }}>
+                          {template.items.map((item, idx) => (
+                            <div key={item.id} style={{ fontSize: 12, paddingBottom: 8, borderBottom: idx < template.items.length - 1 ? "1px solid #f0f0f0" : "none" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 4 }}>
+                                <p style={{ margin: 0, fontWeight: 500 }}>{item.name}</p>
+                                <span style={{ fontSize: 11, color: "#999", backgroundColor: item.status === "Complete" ? "#d1fae5" : item.status === "Incomplete" ? "#fed7aa" : "#fee2e2", padding: "2px 6px", borderRadius: 3, display: "inline-block" }}>
+                                  {item.status}
+                                </span>
+                              </div>
+                              <p style={{ margin: "2px 0", fontSize: 11, color: "#666" }}>Added by: {item.createdBy || "Unknown"}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* ACTION BUTTONS */}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          style={{ ...styles.button, flex: 1, fontSize: 13, padding: "8px 12px", background: "#3b82f6" }}
+                          onClick={() => {
+                            setViewingOfficeTemplate(template);
+                            setShowViewOfficeTemplateModal(true);
+                          }}
+                        >
+                          View
+                        </button>
+                        <button
+                          style={{ ...styles.button, flex: 1, fontSize: 13, padding: "8px 12px", background: "#ef4444" }}
+                          onClick={() => {
+                            setOfficeTemplateToDelete(template);
+                            setShowDeleteOfficeTemplateModal(true);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* ADMIN PPMP VERIFICATION SECTION - Only for admin */}
-            {currentUser?.role === "admin" && (
-            <div style={styles.card}>
-              <h3>Verify User PPMP Status</h3>
-              <p style={styles.cardDescription}>
-                Select a user and update their PPMP status for each department.
-              </p>
-
-              <select
-                style={styles.ppmpInput}
-                value={selectedUserEmail}
-                onChange={(e) => {
-                  setSelectedUserEmail(e.target.value);
-                  setPpmpUpdateDept("");
-                  setPpmpUpdateStatus("No PPMP");
-                }}
-              >
-                <option value="">-- Select a user --</option>
-                {allUsers.map((user, idx) => (
-                  <option key={idx} value={user.email}>{user.email}</option>
-                ))}
-              </select>
-
-              {selectedUserEmail && (
-                <div style={{ marginTop: "15px", padding: "10px", backgroundColor: "#f0f8ff", borderRadius: "5px", fontSize: "12px", color: "#666" }}>
-                  <strong>Verified by:</strong> {currentUser?.email || "Unknown Admin"}
-                </div>
-              )}
-
-              {selectedUserEmail && ppmpDepartments.length > 0 && (
-                <>
-                  <div style={styles.ppmpStatusGrid}>
-                    {ppmpDepartments.map((dept) => {
-                      const userKey = selectedUserEmail;
-                      const statusKey = `${userKey}_${dept}`;
-                      const currentStatus = userPPMPStatuses[statusKey] || "No PPMP";
-
-                      return (
-                        <div key={dept} style={styles.ppmpStatusCard}>
-                          <div style={styles.ppmpStatusHeader}>
-                            <h4 style={styles.ppmpStatusDept}>{dept}</h4>
-                            <span
-                              style={{
-                                ...styles.ppmpStatusBadge,
-                                backgroundColor:
-                                  currentStatus === "Complete"
-                                    ? "#22c55e"
-                                    : currentStatus === "Incomplete"
-                                    ? "#f97316"
-                                    : "#ef4444"
-                              }}
-                            >
-                              {currentStatus}
-                            </span>
-                          </div>
-                          <div style={styles.ppmpStatusButtons}>
-                            <button
-                              style={{
-                                ...styles.ppmpStatusBtn,
-                                ...(currentStatus === "Complete" ? styles.ppmpStatusBtnActive : {})
-                              }}
-                              onClick={() => {
-                                const statusKey = `${selectedUserEmail}_${dept}`;
-                                const updated = { ...userPPMPStatuses, [statusKey]: "Complete" };
-                                setUserPPMPStatuses(updated);
-                                localStorage.setItem("userPPMPStatuses", JSON.stringify(updated));
-                                
-                                // Also update user's local PPMP
-                                let userPPMP = JSON.parse(localStorage.getItem(`userPPMP_${selectedUserEmail}`) || "{}");
-                                userPPMP[dept] = "Complete";
-                                localStorage.setItem(`userPPMP_${selectedUserEmail}`, JSON.stringify(userPPMP));
-                              }}
-                            >
-                              Complete
-                            </button>
-                            <button
-                              style={{
-                                ...styles.ppmpStatusBtn,
-                                ...(currentStatus === "Incomplete" ? styles.ppmpStatusBtnActive : {})
-                              }}
-                              onClick={() => {
-                                const statusKey = `${selectedUserEmail}_${dept}`;
-                                const updated = { ...userPPMPStatuses, [statusKey]: "Incomplete" };
-                                setUserPPMPStatuses(updated);
-                                localStorage.setItem("userPPMPStatuses", JSON.stringify(updated));
-                                
-                                // Also update user's local PPMP
-                                let userPPMP = JSON.parse(localStorage.getItem(`userPPMP_${selectedUserEmail}`) || "{}");
-                                userPPMP[dept] = "Incomplete";
-                                localStorage.setItem(`userPPMP_${selectedUserEmail}`, JSON.stringify(userPPMP));
-                              }}
-                            >
-                              Incomplete
-                            </button>
-                            <button
-                              style={{
-                                ...styles.ppmpStatusBtn,
-                                ...(currentStatus === "No PPMP" ? styles.ppmpStatusBtnActive : {})
-                              }}
-                              onClick={() => {
-                                const statusKey = `${selectedUserEmail}_${dept}`;
-                                const updated = { ...userPPMPStatuses, [statusKey]: "No PPMP" };
-                                setUserPPMPStatuses(updated);
-                                localStorage.setItem("userPPMPStatuses", JSON.stringify(updated));
-                                
-                                // Also update user's local PPMP
-                                let userPPMP = JSON.parse(localStorage.getItem(`userPPMP_${selectedUserEmail}`) || "{}");
-                                userPPMP[dept] = "No PPMP";
-                                localStorage.setItem(`userPPMP_${selectedUserEmail}`, JSON.stringify(userPPMP));
-                              }}
-                            >
-                              No PPMP
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
+            {ppmpOfficeTemplates.length === 0 && (
+              <div style={styles.card}>
+                <p style={{ textAlign: "center", color: "#999" }}>No office templates created yet. Create one above to get started.</p>
+              </div>
             )}
-
           </>
         )}
+
+        {/* VIEW OFFICE TEMPLATE MODAL */}
+        {showViewOfficeTemplateModal && viewingOfficeTemplate && (
+          <div style={styles.modalOverlay}>
+            <div style={{ ...styles.modal, minWidth: 550, maxWidth: 800 }}>
+              {/* HEADER */}
+              <div style={{ borderBottom: `3px solid ${maroon}`, paddingBottom: 16, marginBottom: 20 }}>
+                <h3 style={{ ...styles.modalTitle, margin: 0, color: maroon }}>{viewingOfficeTemplate.officeName}</h3>
+                <p style={{ margin: "8px 0 0", fontSize: 13, color: "#666" }}>Office Code: <strong style={{ fontSize: 14 }}>{viewingOfficeTemplate.officeCode.toUpperCase()}</strong></p>
+              </div>
+              
+              {/* TEMPLATE DETAILS */}
+              <div style={{ backgroundColor: "#f0fdf4", padding: 16, borderRadius: 8, marginBottom: 20, border: "1px solid #dcfce7" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div>
+                    <p style={{ margin: 0, fontSize: 12, color: "#666", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>Total Items</p>
+                    <p style={{ margin: "4px 0 0", fontSize: 24, fontWeight: 700, color: maroon }}>{viewingOfficeTemplate.items.length}</p>
+                  </div>
+                  <div>
+                    <p style={{ margin: 0, fontSize: 12, color: "#666", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>Created</p>
+                    <p style={{ margin: "4px 0 0", fontSize: 14, color: "#333" }}>{viewingOfficeTemplate.createdAt ? new Date(viewingOfficeTemplate.createdAt).toLocaleDateString() : "N/A"}</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* ITEMS LIST */}
+              {viewingOfficeTemplate.items.length > 0 ? (
+                <div style={{ maxHeight: 450, overflowY: "auto", marginBottom: 20 }}>
+                  <h4 style={{ margin: "0 0 16px 0", fontSize: 14, fontWeight: 600, color: "#333", textTransform: "uppercase", letterSpacing: 0.5 }}>PPMP Items</h4>
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {viewingOfficeTemplate.items.map((item, idx) => (
+                      <div key={item.id} style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 6,
+                        padding: 14,
+                        backgroundColor: "#fafafa",
+                        transition: "all 0.2s"
+                      }}>
+                        {/* Item Header */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <h5 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: maroon }}>{item.name}</h5>
+                            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#999" }}>Item #{idx + 1}</p>
+                          </div>
+                          <span style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: "white",
+                            backgroundColor: item.status === "Complete" ? "#22c55e" : item.status === "In Progress" ? "#f59e0b" : item.status === "Incomplete" ? "#ef4444" : "#6b7280",
+                            padding: "5px 12px",
+                            borderRadius: 4,
+                            textTransform: "capitalize",
+                            whiteSpace: "nowrap"
+                          }}>
+                            {item.status}
+                          </span>
+                        </div>
+                        
+                        {/* Item Description */}
+                        {item.description && (
+                          <p style={{ margin: "10px 0", fontSize: 12, color: "#555", fontStyle: "italic", lineHeight: 1.5 }}>📝 {item.description}</p>
+                        )}
+                        
+                        {/* Item Details Grid */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10, fontSize: 12, color: "#666" }}>
+                          {item.dueDate && (
+                            <div>
+                              <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: "#999", textTransform: "uppercase" }}>Due Date</p>
+                              <p style={{ margin: "4px 0 0", fontSize: 13, fontWeight: 500, color: "#333" }}>📅 {new Date(item.dueDate).toLocaleDateString()}</p>
+                            </div>
+                          )}
+                          <div>
+                            <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: "#999", textTransform: "uppercase" }}>Added By</p>
+                            <p style={{ margin: "4px 0 0", fontSize: 13, fontWeight: 500, color: "#333" }}>👤 {item.createdBy || "Unknown"}</p>
+                          </div>
+                        </div>
+                        
+                        {/* Metadata */}
+                        <p style={{ margin: "8px 0 0", fontSize: 11, color: "#999", borderTop: "1px solid #f0f0f0", paddingTop: 8 }}>
+                          ⏰ {new Date(item.createdAt).toLocaleString()}
+                        </p>
+                        
+                        {/* Image Display */}
+                        {item.proofImage && (
+                          <div style={{ marginTop: 10, padding: 8, backgroundColor: "#f0f9ff", borderRadius: 4, border: "1px solid #bfdbfe" }}>
+                            <p style={{ margin: "0 0 6px 0", fontSize: 11, fontWeight: 600, color: "#1e40af" }}>📸 Image Attached</p>
+                            <img src={item.proofImage} alt="Item" style={{ maxWidth: "100%", maxHeight: 120, borderRadius: 4, cursor: "pointer" }} onClick={() => window.open(item.proofImage, "_blank")} title="Click to view full size" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ backgroundColor: "#fef2f2", padding: 20, borderRadius: 8, textAlign: "center", border: "1px solid #fecaca", marginBottom: 20 }}>
+                  <p style={{ margin: 0, fontSize: 14, color: "#991b1b" }}>ℹ️ No items in this template yet</p>
+                </div>
+              )}
+              
+              <div style={styles.modalButtons}>
+                <button
+                  style={styles.confirmButton}
+                  onClick={() => {
+                    setShowViewOfficeTemplateModal(false);
+                    setViewingOfficeTemplate(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE OFFICE TEMPLATE MODAL */}
+        {showDeleteOfficeTemplateModal && officeTemplateToDelete && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.modal}>
+              <h3 style={styles.modalTitle}>Delete Office Template</h3>
+              <p style={styles.modalSubtitle}>
+                Are you sure you want to delete the "{officeTemplateToDelete.officeName}" template? This action cannot be undone.
+              </p>
+              <div style={styles.modalButtons}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowDeleteOfficeTemplateModal(false);
+                    setOfficeTemplateToDelete(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={{ ...styles.button, background: "#ef4444" }}
+                  onClick={() => {
+                    setPpmpOfficeTemplates(ppmpOfficeTemplates.filter(t => t.id !== officeTemplateToDelete.id));
+                    setSuccessMessage("Office template deleted successfully!");
+                    setShowSuccessModal(true);
+                    setShowDeleteOfficeTemplateModal(false);
+                    setOfficeTemplateToDelete(null);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW ALL PPMP STATUS */}
+
 
         {/* DECLINE MODAL */}
         {showDeclineModal && (
@@ -1454,7 +2196,7 @@ export default function BACDashboard({ files, setFiles }) {
             {bacTeamMembers.length > 0 && (
               <div style={styles.card}>
                 <h3>Current Team Members</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: "20px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "32px" }}>
                   {bacTeamMembers.map((member) => (
                     <div key={member.id} style={{
                       border: "1px solid #ddd",
@@ -1523,7 +2265,7 @@ export default function BACDashboard({ files, setFiles }) {
             {docTemplates.length > 0 && (
               <div style={styles.card}>
                 <h3>Current Templates</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "32px" }}>
                   {docTemplates.map((template) => (
                     <div key={template.id} style={{
                       border: "1px solid #ddd",
@@ -1535,8 +2277,8 @@ export default function BACDashboard({ files, setFiles }) {
                       {template.description && (
                         <p style={{ margin: "0 0 10px 0", fontSize: "13px", color: "#666" }}>{template.description}</p>
                       )}
-                      <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#999" }}>
-                        📄 File uploaded
+                      <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#999", display: "flex", alignItems: "center", gap: 6 }}>
+                        <FileText size={14} /> File uploaded
                       </p>
                       <div style={{ display: "flex", gap: "10px" }}>
                         <button
@@ -1590,52 +2332,196 @@ export default function BACDashboard({ files, setFiles }) {
             {createdAccounts.length > 0 && (
               <div style={styles.card}>
                 <h3>Created Accounts ({createdAccounts.length})</h3>
+
+                {/* BULK ACTIONS BAR */}
+                {selectedCreatedAccounts.size > 0 && (
+                  <div style={{
+                    background: "#f0f3f7",
+                    border: `2px solid ${maroon}`,
+                    borderRadius: 8,
+                    padding: 16,
+                    marginBottom: 20,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 20
+                  }}>
+                    <div style={{ fontWeight: 600, color: "#333" }}>
+                      {selectedCreatedAccounts.size} account(s) selected
+                    </div>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      <button
+                        style={{
+                          background: "#ef4444",
+                          color: "white",
+                          padding: "10px 18px",
+                          borderRadius: 6,
+                          border: "none",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          transition: "0.2s"
+                        }}
+                        onClick={handleBulkDeleteCreatedAccounts}
+                        onMouseEnter={(e) => e.target.style.background = "#dc2626"}
+                        onMouseLeave={(e) => e.target.style.background = "#ef4444"}
+                      >
+                        Delete All
+                      </button>
+                      <button
+                        style={{
+                          background: "#e5e7eb",
+                          color: "#333",
+                          padding: "10px 18px",
+                          borderRadius: 6,
+                          border: "none",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          transition: "0.2s"
+                        }}
+                        onClick={() => setSelectedCreatedAccounts(new Set())}
+                        onMouseEnter={(e) => e.target.style.background = "#d1d5db"}
+                        onMouseLeave={(e) => e.target.style.background = "#e5e7eb"}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ overflowX: "auto" }}>
                   <table style={styles.table}>
                     <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Role</th>
-                        <th>Created By</th>
-                        <th>Created Date</th>
-                        <th>Action</th>
+                      <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #e9ecef" }}>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "center", width: "40px" }}>
+                          <input
+                            type="checkbox"
+                            checked={(() => {
+                              const startIdx = (createdAccountsCurrentPage - 1) * createdAccountsItemsPerPage;
+                              const endIdx = startIdx + createdAccountsItemsPerPage;
+                              const pageAccounts = createdAccounts.slice(startIdx, endIdx);
+                              return pageAccounts.length > 0 && pageAccounts.every(acc => selectedCreatedAccounts.has(acc.id));
+                            })()}
+                            onChange={(e) => {
+                              const startIdx = (createdAccountsCurrentPage - 1) * createdAccountsItemsPerPage;
+                              const endIdx = startIdx + createdAccountsItemsPerPage;
+                              const pageAccounts = createdAccounts.slice(startIdx, endIdx);
+                              if (e.target.checked) {
+                                const newSelected = new Set(selectedCreatedAccounts);
+                                pageAccounts.forEach(a => newSelected.add(a.id));
+                                setSelectedCreatedAccounts(newSelected);
+                              } else {
+                                const newSelected = new Set(selectedCreatedAccounts);
+                                pageAccounts.forEach(a => newSelected.delete(a.id));
+                                setSelectedCreatedAccounts(newSelected);
+                              }
+                            }}
+                          />
+                        </th>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Name</th>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Email</th>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Department</th>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Role</th>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Created By</th>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "left" }}>Created Date</th>
+                        <th style={{ padding: "18px 16px", fontWeight: 600, fontSize: 14, color: "#333", textAlign: "center" }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {createdAccounts.map((account) => (
-                        <tr key={account.id}>
-                          <td style={{ fontWeight: "500" }}>{account.firstName} {account.lastName}</td>
-                          <td>{account.email}</td>
-                          <td>
-                            <span style={{
-                              display: "inline-block",
-                              padding: "4px 10px",
-                              backgroundColor: account.role === "admin" ? "#fdecea" : "#d1fae5",
-                              color: account.role === "admin" ? "#a60000" : "#065f46",
-                              borderRadius: "4px",
-                              fontSize: "12px",
-                              fontWeight: "600"
-                            }}>
-                              {account.role}
-                            </span>
-                          </td>
-                          <td style={{ fontSize: "12px", color: "#666" }}>{account.createdBy}</td>
-                          <td style={{ fontSize: "12px", color: "#999" }}>
-                            {new Date(account.createdDate).toLocaleDateString()}
-                          </td>
-                          <td style={{ textAlign: "center" }}>
-                            <button
-                              style={{...styles.declineButtonSmall, padding: "6px 12px", fontSize: "12px"}}
-                              onClick={() => handleDeleteAccount(account.id)}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {(() => {
+                        const startIdx = (createdAccountsCurrentPage - 1) * createdAccountsItemsPerPage;
+                        const endIdx = startIdx + createdAccountsItemsPerPage;
+                        return createdAccounts.slice(startIdx, endIdx).map((account) => (
+                          <tr key={account.id} style={{ backgroundColor: selectedCreatedAccounts.has(account.id) ? "#f0f3f7" : "transparent", borderBottom: "1px solid #f0f0f0" }}>
+                            <td style={{ padding: "16px 14px", textAlign: "center" }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedCreatedAccounts.has(account.id)}
+                                onChange={() => handleSelectCreatedAccount(account.id)}
+                                style={{ cursor: "pointer", width: 18, height: 18 }}
+                              />
+                            </td>
+                            <td style={{ padding: "16px 14px", fontWeight: "500" }}>{account.firstName} {account.lastName}</td>
+                            <td style={{ padding: "16px 14px" }}>{account.email}</td>
+                            <td style={{ padding: "16px 14px", fontSize: "12px", color: "#333" }}>{account.department || "N/A"}</td>
+                            <td style={{ padding: "16px 14px" }}>
+                              <span style={{
+                                display: "inline-block",
+                                padding: "4px 10px",
+                                backgroundColor: account.role === "admin" ? "#fdecea" : "#d1fae5",
+                                color: account.role === "admin" ? "#a60000" : "#065f46",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                fontWeight: "600"
+                              }}>
+                                {account.role}
+                              </span>
+                            </td>
+                            <td style={{ padding: "16px 14px", fontSize: "12px", color: "#666" }}>{account.createdBy}</td>
+                            <td style={{ padding: "16px 14px", fontSize: "12px", color: "#999" }}>
+                              {new Date(account.createdDate).toLocaleDateString()}
+                            </td>
+                            <td style={{ padding: "16px 14px", textAlign: "center" }}>
+                              <button
+                                style={{...styles.declineButtonSmall, padding: "6px 12px", fontSize: "12px"}}
+                                onClick={() => handleDeleteAccount(account.id)}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ));
+                      })()}
                     </tbody>
                   </table>
+                </div>
+
+                {/* PAGINATION CONTROLS */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 16, borderTop: "1px solid #e9ecef" }}>
+                  <div style={{ fontSize: 13, color: "#666" }}>
+                    Page {createdAccountsCurrentPage} of {Math.ceil(createdAccounts.length / createdAccountsItemsPerPage)} • Showing {Math.min((createdAccountsCurrentPage - 1) * createdAccountsItemsPerPage + 1, createdAccounts.length)}-{Math.min(createdAccountsCurrentPage * createdAccountsItemsPerPage, createdAccounts.length)} of {createdAccounts.length}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      style={{
+                        background: createdAccountsCurrentPage === 1 ? "#e5e7eb" : "#ffffff",
+                        color: createdAccountsCurrentPage === 1 ? "#999" : "#333",
+                        padding: "8px 12px",
+                        border: "1px solid #ddd",
+                        borderRadius: 6,
+                        cursor: createdAccountsCurrentPage === 1 ? "not-allowed" : "pointer",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        transition: "0.2s"
+                      }}
+                      onClick={() => createdAccountsCurrentPage > 1 && setCreatedAccountsCurrentPage(createdAccountsCurrentPage - 1)}
+                      disabled={createdAccountsCurrentPage === 1}
+                      onMouseEnter={(e) => { if (createdAccountsCurrentPage > 1) e.target.style.background = "#f3f4f6"; }}
+                      onMouseLeave={(e) => { if (createdAccountsCurrentPage > 1) e.target.style.background = "#ffffff"; }}
+                    >
+                      ← Previous
+                    </button>
+                    <button
+                      style={{
+                        background: createdAccountsCurrentPage >= Math.ceil(createdAccounts.length / createdAccountsItemsPerPage) ? "#e5e7eb" : "#ffffff",
+                        color: createdAccountsCurrentPage >= Math.ceil(createdAccounts.length / createdAccountsItemsPerPage) ? "#999" : "#333",
+                        padding: "8px 12px",
+                        border: "1px solid #ddd",
+                        borderRadius: 6,
+                        cursor: createdAccountsCurrentPage >= Math.ceil(createdAccounts.length / createdAccountsItemsPerPage) ? "not-allowed" : "pointer",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        transition: "0.2s"
+                      }}
+                      onClick={() => createdAccountsCurrentPage < Math.ceil(createdAccounts.length / createdAccountsItemsPerPage) && setCreatedAccountsCurrentPage(createdAccountsCurrentPage + 1)}
+                      disabled={createdAccountsCurrentPage >= Math.ceil(createdAccounts.length / createdAccountsItemsPerPage)}
+                      onMouseEnter={(e) => { if (createdAccountsCurrentPage < Math.ceil(createdAccounts.length / createdAccountsItemsPerPage)) e.target.style.background = "#f3f4f6"; }}
+                      onMouseLeave={(e) => { if (createdAccountsCurrentPage < Math.ceil(createdAccounts.length / createdAccountsItemsPerPage)) e.target.style.background = "#ffffff"; }}
+                    >
+                      Next →
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1651,124 +2537,414 @@ export default function BACDashboard({ files, setFiles }) {
         {/* ACCOUNT REQUESTS VIEW - Combined view for all request statuses */}
         {view === "accountRequests" && (
           <>
-            {/* PENDING REQUESTS SECTION */}
-            {accountRequests.filter(req => !req.status || req.status === "pending").length > 0 && (
-              <div style={styles.card}>
-                <h3>⏳ Pending Account Requests ({accountRequests.filter(req => !req.status || req.status === "pending").length})</h3>
-                <p style={styles.cardDescription}>
-                  Users who have requested accounts. Approve or reject their requests.
-                </p>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Department</th>
-                        <th>Email</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {accountRequests.filter(req => !req.status || req.status === "pending").map((request) => (
-                        <tr key={request.id}>
-                          <td style={{ fontWeight: "500" }}>{request.name}</td>
-                          <td>{request.department}</td>
-                          <td style={{ fontSize: "12px", color: "#666" }}>{request.email}</td>
-                          <td style={{ textAlign: "center" }}>
-                            <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                              <button
-                                style={{...styles.button, padding: "6px 12px", fontSize: "12px"}}
-                                onClick={() => handleApproveRequest(request.id)}
-                              >
-                                ✓ Approve
-                              </button>
-                              <button
-                                style={{...styles.declineButtonSmall, padding: "6px 12px", fontSize: "12px"}}
-                                onClick={() => handleRejectRequest(request.id)}
-                              >
-                                ✕ Reject
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* APPROVED REQUESTS SECTION */}
-            {accountRequests.filter(req => req.status === "approved").length > 0 && (
-              <div style={styles.card}>
-                <h3>✓ Approved Requests ({accountRequests.filter(req => req.status === "approved").length})</h3>
-                <p style={styles.cardDescription}>
-                  Account requests that have been approved.
-                </p>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Department</th>
-                        <th>Email</th>
-                        <th>Approved Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {accountRequests.filter(req => req.status === "approved").map((request) => (
-                        <tr key={request.id}>
-                          <td style={{ fontWeight: "500" }}>{request.name}</td>
-                          <td>{request.department}</td>
-                          <td style={{ fontSize: "12px", color: "#666" }}>{request.email}</td>
-                          <td style={{ fontSize: "12px", color: "#22c55e", fontWeight: "600" }}>
-                            {new Date(request.approvedDate).toLocaleDateString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* DECLINED REQUESTS SECTION */}
-            {accountRequests.filter(req => req.status === "declined").length > 0 && (
-              <div style={styles.card}>
-                <h3>✕ Declined Requests ({accountRequests.filter(req => req.status === "declined").length})</h3>
-                <p style={styles.cardDescription}>
-                  Account requests that have been declined.
-                </p>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Department</th>
-                        <th>Email</th>
-                        <th>Declined Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {accountRequests.filter(req => req.status === "declined").map((request) => (
-                        <tr key={request.id}>
-                          <td style={{ fontWeight: "500" }}>{request.name}</td>
-                          <td>{request.department}</td>
-                          <td style={{ fontSize: "12px", color: "#666" }}>{request.email}</td>
-                          <td style={{ fontSize: "12px", color: "#ef4444", fontWeight: "600" }}>
-                            {new Date(request.declinedDate).toLocaleDateString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {accountRequests.length === 0 && (
+            {accountRequests.length === 0 ? (
               <div style={styles.card}>
                 <p style={{ textAlign: "center", color: "#999" }}>No account requests yet.</p>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "28px" }}>
+                {/* PENDING REQUESTS SECTION */}
+                {accountRequests.filter(req => !req.status || req.status === "pending").length > 0 && (
+                  <div style={styles.card}>
+                    <h3 style={{display: "flex", alignItems: "center", gap: 10}}><Clock size={24} strokeWidth={2} /> Pending ({accountRequests.filter(req => !req.status || req.status === "pending").length})</h3>
+                    <p style={styles.cardDescription}>
+                      Users who have requested accounts. Approve or reject their requests.
+                    </p>
+
+                    {/* BULK ACTIONS BAR */}
+                    {selectedAccountRequests.size > 0 && (
+                      <div style={{
+                        background: "#f0f3f7",
+                        border: `2px solid ${maroon}`,
+                        borderRadius: 8,
+                        padding: 12,
+                        marginBottom: 16,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                        flexWrap: "wrap"
+                      }}>
+                        <div style={{ fontWeight: 600, color: "#333", fontSize: 13 }}>
+                          {selectedAccountRequests.size} selected
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            style={{
+                              background: "#22c55e",
+                              color: "white",
+                              padding: "8px 14px",
+                              borderRadius: 5,
+                              border: "none",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: 12,
+                              transition: "0.2s"
+                            }}
+                            onClick={handleBulkApproveAccountRequests}
+                            onMouseEnter={(e) => e.target.style.background = "#16a34a"}
+                            onMouseLeave={(e) => e.target.style.background = "#22c55e"}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            style={{
+                              background: "#ef4444",
+                              color: "white",
+                              padding: "8px 14px",
+                              borderRadius: 5,
+                              border: "none",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: 12,
+                              transition: "0.2s"
+                            }}
+                            onClick={handleBulkRejectAccountRequests}
+                            onMouseEnter={(e) => e.target.style.background = "#dc2626"}
+                            onMouseLeave={(e) => e.target.style.background = "#ef4444"}
+                          >
+                            Reject
+                          </button>
+                          <button
+                            style={{
+                              background: "#e5e7eb",
+                              color: "#333",
+                              padding: "8px 14px",
+                              borderRadius: 5,
+                              border: "none",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: 12,
+                              transition: "0.2s"
+                            }}
+                            onClick={() => setSelectedAccountRequests(new Set())}
+                            onMouseEnter={(e) => e.target.style.background = "#d1d5db"}
+                            onMouseLeave={(e) => e.target.style.background = "#e5e7eb"}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #e9ecef" }}>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "center", width: "32px" }}>
+                              <input
+                                type="checkbox"
+                                checked={(() => {
+                                  const pendingRequests = accountRequests.filter(req => !req.status || req.status === "pending");
+                                  const startIdx = (pendingCurrentPage - 1) * itemsPerPage;
+                                  const endIdx = startIdx + itemsPerPage;
+                                  const pageRequests = pendingRequests.slice(startIdx, endIdx);
+                                  return pageRequests.length > 0 && pageRequests.every(req => selectedAccountRequests.has(req.id));
+                                })()}
+                                onChange={(e) => {
+                                  const pendingRequests = accountRequests.filter(req => !req.status || req.status === "pending");
+                                  const startIdx = (pendingCurrentPage - 1) * itemsPerPage;
+                                  const endIdx = startIdx + itemsPerPage;
+                                  const pageRequests = pendingRequests.slice(startIdx, endIdx);
+                                  if (e.target.checked) {
+                                    const newSelected = new Set(selectedAccountRequests);
+                                    pageRequests.forEach(r => newSelected.add(r.id));
+                                    setSelectedAccountRequests(newSelected);
+                                  } else {
+                                    const newSelected = new Set(selectedAccountRequests);
+                                    pageRequests.forEach(r => newSelected.delete(r.id));
+                                    setSelectedAccountRequests(newSelected);
+                                  }
+                                }}
+                                style={{ cursor: "pointer", width: 16, height: 16 }}
+                              />
+                            </th>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Name</th>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Email</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const pendingRequests = accountRequests.filter(req => !req.status || req.status === "pending");
+                            const startIdx = (pendingCurrentPage - 1) * itemsPerPage;
+                            const endIdx = startIdx + itemsPerPage;
+                            const paginatedRequests = pendingRequests.slice(startIdx, endIdx);
+                            
+                            if (paginatedRequests.length === 0) {
+                              return <tr><td colSpan="3" style={{ textAlign: "center", padding: 12 }}>No pending requests</td></tr>;
+                            }
+                            
+                            return paginatedRequests.map((request) => (
+                              <tr key={request.id} style={{ backgroundColor: selectedAccountRequests.has(request.id) ? "#f0f3f7" : "transparent", borderBottom: "1px solid #f0f0f0" }}>
+                                <td style={{ padding: "12px", textAlign: "center" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedAccountRequests.has(request.id)}
+                                    onChange={() => handleSelectAccountRequest(request.id)}
+                                    style={{ cursor: "pointer", width: 16, height: 16 }}
+                                  />
+                                </td>
+                                <td style={{ padding: "12px", fontWeight: "500", fontSize: 13 }}>{request.name}</td>
+                                <td style={{ padding: "12px", fontSize: "12px", color: "#666" }}>{request.email}</td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* PENDING PAGINATION CONTROLS */}
+                    {accountRequests.filter(req => !req.status || req.status === "pending").length > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #e9ecef" }}>
+                        <div style={{ fontSize: 12, color: "#666" }}>
+                          Page {pendingCurrentPage} of {Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage)} • Showing {Math.min((pendingCurrentPage - 1) * itemsPerPage + 1, accountRequests.filter(req => !req.status || req.status === "pending").length)}-{Math.min(pendingCurrentPage * itemsPerPage, accountRequests.filter(req => !req.status || req.status === "pending").length)} of {accountRequests.filter(req => !req.status || req.status === "pending").length}
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            style={{
+                              background: pendingCurrentPage === 1 ? "#e5e7eb" : "#ffffff",
+                              color: pendingCurrentPage === 1 ? "#999" : "#333",
+                              padding: "6px 10px",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              cursor: pendingCurrentPage === 1 ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              transition: "0.2s"
+                            }}
+                            onClick={() => pendingCurrentPage > 1 && setPendingCurrentPage(pendingCurrentPage - 1)}
+                            disabled={pendingCurrentPage === 1}
+                            onMouseEnter={(e) => { if (pendingCurrentPage > 1) e.target.style.background = "#f3f4f6"; }}
+                            onMouseLeave={(e) => { if (pendingCurrentPage > 1) e.target.style.background = "#ffffff"; }}
+                          >
+                            ← Prev
+                          </button>
+                          <button
+                            style={{
+                              background: pendingCurrentPage >= Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage) ? "#e5e7eb" : "#ffffff",
+                              color: pendingCurrentPage >= Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage) ? "#999" : "#333",
+                              padding: "6px 10px",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              cursor: pendingCurrentPage >= Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage) ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              transition: "0.2s"
+                            }}
+                            onClick={() => pendingCurrentPage < Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage) && setPendingCurrentPage(pendingCurrentPage + 1)}
+                            disabled={pendingCurrentPage >= Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage)}
+                            onMouseEnter={(e) => { if (pendingCurrentPage < Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage)) e.target.style.background = "#f3f4f6"; }}
+                            onMouseLeave={(e) => { if (pendingCurrentPage < Math.ceil(accountRequests.filter(req => !req.status || req.status === "pending").length / itemsPerPage)) e.target.style.background = "#ffffff"; }}
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {accountRequests.filter(req => !req.status || req.status === "pending").length > 0 && (
+                      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <button
+                          style={{...styles.button, padding: "8px 12px", fontSize: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6}}
+                          onClick={handleQuickApproveAll}
+                        >
+                          <Check size={16} strokeWidth={2.5} /> Approve All
+                        </button>
+                        <button
+                          style={{...styles.declineButtonSmall, padding: "8px 12px", fontSize: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6}}
+                          onClick={handleQuickRejectAll}
+                        >
+                          <X size={16} strokeWidth={2.5} /> Reject All
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* APPROVED REQUESTS SECTION */}
+                {accountRequests.filter(req => req.status === "approved").length > 0 && (
+                  <div style={styles.card}>
+                    <h3 style={{display: "flex", alignItems: "center", gap: 10}}><Check size={24} strokeWidth={2} /> Approved ({accountRequests.filter(req => req.status === "approved").length})</h3>
+                    <p style={styles.cardDescription}>
+                      Account requests that have been approved.
+                    </p>
+
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #e9ecef" }}>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Name</th>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Email</th>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Approved Date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const approvedRequests = accountRequests.filter(req => req.status === "approved");
+                            const startIdx = (approvedCurrentPage - 1) * itemsPerPage;
+                            const endIdx = startIdx + itemsPerPage;
+                            const paginatedRequests = approvedRequests.slice(startIdx, endIdx);
+                            
+                            if (paginatedRequests.length === 0) {
+                              return <tr><td colSpan="3" style={{ textAlign: "center", padding: 12 }}>No approved requests</td></tr>;
+                            }
+                            
+                            return paginatedRequests.map((request) => (
+                              <tr key={request.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                                <td style={{ padding: "12px", fontWeight: "500", fontSize: 13 }}>{request.name}</td>
+                                <td style={{ padding: "12px", fontSize: "12px", color: "#666" }}>{request.email}</td>
+                                <td style={{ padding: "12px", fontSize: "12px", color: "#22c55e", fontWeight: "600" }}>
+                                  {new Date(request.approvedDate).toLocaleDateString()}
+                                </td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* APPROVED PAGINATION CONTROLS */}
+                    {accountRequests.filter(req => req.status === "approved").length > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #e9ecef" }}>
+                        <div style={{ fontSize: 12, color: "#666" }}>
+                          Page {approvedCurrentPage} of {Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage)} • Showing {Math.min((approvedCurrentPage - 1) * itemsPerPage + 1, accountRequests.filter(req => req.status === "approved").length)}-{Math.min(approvedCurrentPage * itemsPerPage, accountRequests.filter(req => req.status === "approved").length)} of {accountRequests.filter(req => req.status === "approved").length}
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            style={{
+                              background: approvedCurrentPage === 1 ? "#e5e7eb" : "#ffffff",
+                              color: approvedCurrentPage === 1 ? "#999" : "#333",
+                              padding: "6px 10px",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              cursor: approvedCurrentPage === 1 ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              transition: "0.2s"
+                            }}
+                            onClick={() => approvedCurrentPage > 1 && setApprovedCurrentPage(approvedCurrentPage - 1)}
+                            disabled={approvedCurrentPage === 1}
+                            onMouseEnter={(e) => { if (approvedCurrentPage > 1) e.target.style.background = "#f3f4f6"; }}
+                            onMouseLeave={(e) => { if (approvedCurrentPage > 1) e.target.style.background = "#ffffff"; }}
+                          >
+                            ← Prev
+                          </button>
+                          <button
+                            style={{
+                              background: approvedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage) ? "#e5e7eb" : "#ffffff",
+                              color: approvedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage) ? "#999" : "#333",
+                              padding: "6px 10px",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              cursor: approvedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage) ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              transition: "0.2s"
+                            }}
+                            onClick={() => approvedCurrentPage < Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage) && setApprovedCurrentPage(approvedCurrentPage + 1)}
+                            disabled={approvedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage)}
+                            onMouseEnter={(e) => { if (approvedCurrentPage < Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage)) e.target.style.background = "#f3f4f6"; }}
+                            onMouseLeave={(e) => { if (approvedCurrentPage < Math.ceil(accountRequests.filter(req => req.status === "approved").length / itemsPerPage)) e.target.style.background = "#ffffff"; }}
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {accountRequests.filter(req => req.status === "declined").length > 0 && (
+                  <div style={styles.card}>
+                    <h3 style={{display: "flex", alignItems: "center", gap: 10}}><X size={24} strokeWidth={2} /> Declined ({accountRequests.filter(req => req.status === "declined").length})</h3>
+                    <p style={styles.cardDescription}>
+                      Account requests that have been declined.
+                    </p>
+
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #e9ecef" }}>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Name</th>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Email</th>
+                            <th style={{ padding: "14px 12px", fontWeight: 600, fontSize: 13, color: "#333", textAlign: "left" }}>Declined Date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const declinedRequests = accountRequests.filter(req => req.status === "declined");
+                            const startIdx = (declinedCurrentPage - 1) * itemsPerPage;
+                            const endIdx = startIdx + itemsPerPage;
+                            const paginatedRequests = declinedRequests.slice(startIdx, endIdx);
+                            
+                            if (paginatedRequests.length === 0) {
+                              return <tr><td colSpan="3" style={{ textAlign: "center", padding: 12 }}>No declined requests</td></tr>;
+                            }
+                            
+                            return paginatedRequests.map((request) => (
+                              <tr key={request.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                                <td style={{ padding: "12px", fontWeight: "500", fontSize: 13 }}>{request.name}</td>
+                                <td style={{ padding: "12px", fontSize: "12px", color: "#666" }}>{request.email}</td>
+                                <td style={{ padding: "12px", fontSize: "12px", color: "#ef4444", fontWeight: "600" }}>
+                                  {new Date(request.declinedDate).toLocaleDateString()}
+                                </td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* DECLINED PAGINATION CONTROLS */}
+                    {accountRequests.filter(req => req.status === "declined").length > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #e9ecef" }}>
+                        <div style={{ fontSize: 12, color: "#666" }}>
+                          Page {declinedCurrentPage} of {Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage)} • Showing {Math.min((declinedCurrentPage - 1) * itemsPerPage + 1, accountRequests.filter(req => req.status === "declined").length)}-{Math.min(declinedCurrentPage * itemsPerPage, accountRequests.filter(req => req.status === "declined").length)} of {accountRequests.filter(req => req.status === "declined").length}
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            style={{
+                              background: declinedCurrentPage === 1 ? "#e5e7eb" : "#ffffff",
+                              color: declinedCurrentPage === 1 ? "#999" : "#333",
+                              padding: "6px 10px",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              cursor: declinedCurrentPage === 1 ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              transition: "0.2s"
+                            }}
+                            onClick={() => declinedCurrentPage > 1 && setDeclinedCurrentPage(declinedCurrentPage - 1)}
+                            disabled={declinedCurrentPage === 1}
+                            onMouseEnter={(e) => { if (declinedCurrentPage > 1) e.target.style.background = "#f3f4f6"; }}
+                            onMouseLeave={(e) => { if (declinedCurrentPage > 1) e.target.style.background = "#ffffff"; }}
+                          >
+                            ← Prev
+                          </button>
+                          <button
+                            style={{
+                              background: declinedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage) ? "#e5e7eb" : "#ffffff",
+                              color: declinedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage) ? "#999" : "#333",
+                              padding: "6px 10px",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              cursor: declinedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage) ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              transition: "0.2s"
+                            }}
+                            onClick={() => declinedCurrentPage < Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage) && setDeclinedCurrentPage(declinedCurrentPage + 1)}
+                            disabled={declinedCurrentPage >= Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage)}
+                            onMouseEnter={(e) => { if (declinedCurrentPage < Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage)) e.target.style.background = "#f3f4f6"; }}
+                            onMouseLeave={(e) => { if (declinedCurrentPage < Math.ceil(accountRequests.filter(req => req.status === "declined").length / itemsPerPage)) e.target.style.background = "#ffffff"; }}
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
               </div>
             )}
           </>
@@ -1785,7 +2961,7 @@ export default function BACDashboard({ files, setFiles }) {
             </div>
 
             {/* ANALYTICS GRID */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: "20px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "32px" }}>
               {/* SUBMISSIONS BY DEPARTMENT - PIE CHART DATA */}
               <div style={styles.card}>
                 <h4 style={{ marginTop: 0 }}> Submissions by Department</h4>
@@ -2021,6 +3197,7 @@ export default function BACDashboard({ files, setFiles }) {
               <div style={styles.fileInfoBox}>
                 <p><strong>File Name:</strong> {selectedFile.name}</p>
                 <p><strong>Department:</strong> {selectedFile.department}</p>
+                <p><strong>Requesting User:</strong> {selectedFile.requestingUser || "N/A"}</p>
                 <p><strong>Type:</strong> {selectedFile.type}</p>
                 <p><strong>Date Uploaded:</strong> {selectedFile.date}</p>
                 <p><strong>Status:</strong> {selectedFile.status}</p>
@@ -2095,8 +3272,8 @@ export default function BACDashboard({ files, setFiles }) {
                   borderRadius: "5px",
                   marginBottom: "15px"
                 }}>
-                  <p style={{ margin: 0, fontSize: "13px", color: "#856404", fontWeight: "500" }}>
-                    ⚠️ Warning: You are creating an ADMIN account
+                  <p style={{ margin: 0, fontSize: "13px", color: "#856404", fontWeight: "500", display: "flex", alignItems: "center", gap: 8 }}>
+                    <AlertCircle size={18} strokeWidth={2} /> Warning: You are creating an ADMIN account
                   </p>
                   <p style={{ margin: "5px 0 0 0", fontSize: "12px", color: "#856404" }}>
                     Admin accounts have full access to all system features including file management, user management, and PPMP verification.
@@ -2105,7 +3282,7 @@ export default function BACDashboard({ files, setFiles }) {
               )}
 
               <form onSubmit={handleCreateAccount} style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px" }}>
                   <div>
                     <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>First Name *</label>
                     <input
@@ -2174,6 +3351,17 @@ export default function BACDashboard({ files, setFiles }) {
                   </select>
                 </div>
 
+                <div>
+                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Department *</label>
+                  <input
+                    type="text"
+                    value={accountForm.department}
+                    onChange={(e) => setAccountForm({ ...accountForm, department: e.target.value })}
+                    placeholder="e.g., HR, Finance, Registrar, Accounting"
+                    style={styles.input}
+                  />
+                </div>
+
                 {/* ADMIN-SPECIFIC FIELDS */}
                 {accountForm.role === "admin" && (
                   <>
@@ -2217,7 +3405,7 @@ export default function BACDashboard({ files, setFiles }) {
                     style={styles.cancelButton}
                     onClick={() => {
                       setShowCreateAccountModal(false);
-                      setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user", adminConfirm: false });
+                      setAccountForm({ firstName: "", lastName: "", email: "", password: "", confirmPassword: "", role: "user", department: "", adminConfirm: false });
                       setAccountError("");
                       setSelectedRequestId(null);
                     }}
@@ -2326,48 +3514,48 @@ export default function BACDashboard({ files, setFiles }) {
         {/* ADD/EDIT TEMPLATE MODAL */}
         {showAddTemplateModal && (
           <div style={styles.modalOverlay}>
-            <div style={styles.modal}>
+            <div style={{...styles.modal, minWidth: "550px"}}>
               <h3 style={styles.modalTitle}>{editingTemplateId ? "Edit Template" : "Add Template"}</h3>
               
-              <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+              <form style={{ display: "flex", flexDirection: "column", gap: "20px", margin: "0" }}>
                 <div>
-                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Template Name *</label>
+                  <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", fontSize: "13px", color: "#333", textTransform: "uppercase", letterSpacing: "0.5px" }}>Template Name *</label>
                   <input
                     type="text"
                     value={templateForm.name}
                     onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
                     placeholder="e.g., Bid Evaluation Form"
-                    style={styles.input}
+                    style={{...styles.input, padding: "12px 14px", fontSize: "14px", width: "100%", boxSizing: "border-box"}}
                   />
                 </div>
 
                 <div>
-                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Description</label>
+                  <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", fontSize: "13px", color: "#333", textTransform: "uppercase", letterSpacing: "0.5px" }}>Description</label>
                   <textarea
                     value={templateForm.description}
                     onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
                     placeholder="Brief description of the template (optional)"
-                    style={{...styles.input, minHeight: "80px", resize: "vertical"}}
+                    style={{...styles.input, minHeight: "120px", padding: "12px 14px", fontSize: "14px", resize: "vertical", fontFamily: "inherit", width: "100%", boxSizing: "border-box"}}
                   />
                 </div>
 
                 <div>
-                  <label style={{ display: "block", marginBottom: "5px", fontWeight: "500" }}>Upload File *</label>
+                  <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", fontSize: "13px", color: "#333", textTransform: "uppercase", letterSpacing: "0.5px" }}>Upload File *</label>
                   <input
                     type="file"
                     accept=".pdf,.doc,.docx,.xlsx,.xls,.ppt,.pptx"
                     onChange={handleTemplateFileUpload}
-                    style={styles.input}
+                    style={{...styles.input, padding: "10px 12px", fontSize: "13px", width: "100%", boxSizing: "border-box"}}
                   />
                   {templateForm.fileData && (
-                    <p style={{ margin: "10px 0 0 0", fontSize: "12px", color: "#22c55e", fontWeight: "500" }}>
-                      ✓ File uploaded
+                    <p style={{ margin: "10px 0 0 0", fontSize: "12px", color: "#22c55e", fontWeight: "600", display: "flex", alignItems: "center", gap: 8 }}>
+                      <Check size={16} strokeWidth={2.5} /> File uploaded successfully
                     </p>
                   )}
                 </div>
-              </div>
+              </form>
 
-              <div style={styles.modalButtons}>
+              <div style={{...styles.modalButtons, marginTop: "20px", paddingTop: "20px", borderTop: "1px solid #e5e7eb"}}>
                 <button
                   style={styles.cancelButton}
                   onClick={() => {
@@ -2394,7 +3582,10 @@ export default function BACDashboard({ files, setFiles }) {
           <div style={styles.modalOverlay}>
             <div style={styles.successModalContent}>
               <div style={styles.successModalHeader}>
-                <h2 style={{ margin: 0, color: "white" }}>✓ Success!</h2>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                  <Check size={28} color="white" strokeWidth={2.5} />
+                  <h2 style={{ margin: 0, color: "white" }}>Success!</h2>
+                </div>
               </div>
               <div style={styles.successModalBody}>
                 <p style={{ fontSize: 16, color: "#333", marginBottom: 0 }}>
@@ -2417,7 +3608,10 @@ export default function BACDashboard({ files, setFiles }) {
           <div style={styles.modalOverlay}>
             <div style={styles.successModalContent}>
               <div style={styles.successModalHeader}>
-                <h2 style={{ margin: 0, color: "white" }}> Confirm Rejection</h2>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                  <X size={28} color="white" strokeWidth={2.5} />
+                  <h2 style={{ margin: 0, color: "white" }}>Confirm Rejection</h2>
+                </div>
               </div>
               <div style={styles.successModalBody}>
                 <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
@@ -2437,6 +3631,159 @@ export default function BACDashboard({ files, setFiles }) {
                 <button
                   style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
                   onClick={cancelRejectRequest}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* APPROVE CONFIRMATION MODAL */}
+        {showApproveConfirmModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                  <Check size={28} color="white" strokeWidth={2.5} />
+                  <h2 style={{ margin: 0, color: "white" }}>Confirm Approval</h2>
+                </div>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  {approvalType === "single" && (
+                    <>Are you sure you want to approve the account request for <strong>{requestToApprove?.name}</strong>?</>
+                  )}
+                  {approvalType === "bulk" && (
+                    <>Are you sure you want to approve <strong>{approvalsToProcess.size} selected account request(s)</strong>?</>
+                  )}
+                  {approvalType === "quickAll" && (
+                    <>Are you sure you want to approve all <strong>{approvalsToProcess.size} pending account request(s)</strong>?</>
+                  )}
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  {approvalType === "single" && "This action will update their status to \"Approved\"."}
+                  {(approvalType === "bulk" || approvalType === "quickAll") && "This action will update all selected requests to \"Approved\"."}
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#22c55e" }}
+                  onClick={confirmApproveRequest}
+                >
+                  Yes, Approve
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelApproveRequest}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* REJECT ALL CONFIRMATION MODAL */}
+        {showRejectAllConfirmModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                  <X size={28} color="white" strokeWidth={2.5} />
+                  <h2 style={{ margin: 0, color: "white" }}>Confirm Rejection</h2>
+                </div>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  Are you sure you want to reject all <strong>{rejectAllCount} pending account request(s)</strong>?
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  This action will update all selected requests to "Declined".
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#dc3545" }}
+                  onClick={confirmRejectAll}
+                >
+                  Yes, Reject All
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelRejectAll}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* APPROVE FILES CONFIRMATION MODAL */}
+        {showApproveFilesConfirmModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                  <Check size={28} color="white" strokeWidth={2.5} />
+                  <h2 style={{ margin: 0, color: "white" }}>Confirm Approval</h2>
+                </div>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  Are you sure you want to approve <strong>{approveFilesCount} selected file(s)</strong>?
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  This action will update all selected files to "Approved".
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#22c55e" }}
+                  onClick={confirmApproveFiles}
+                >
+                  Yes, Approve
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelApproveFiles}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE CREATED ACCOUNTS CONFIRMATION MODAL */}
+        {showDeleteCreatedAccountsModal && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.successModalContent}>
+              <div style={styles.successModalHeader}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                  <Trash2 size={28} color="white" strokeWidth={2.5} />
+                  <h2 style={{ margin: 0, color: "white" }}>Delete Accounts</h2>
+                </div>
+              </div>
+              <div style={styles.successModalBody}>
+                <p style={{ fontSize: 16, color: "#333", marginBottom: 15 }}>
+                  Are you sure you want to delete <strong>{deleteCreatedAccountsCount} account(s)</strong>?
+                </p>
+                <p style={{ fontSize: 14, color: "#666", marginBottom: 0 }}>
+                  This action cannot be undone. The accounts will be permanently deleted from the system.
+                </p>
+              </div>
+              <div style={styles.successModalFooter}>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#dc3545" }}
+                  onClick={confirmDeleteCreatedAccounts}
+                >
+                  Yes, Delete
+                </button>
+                <button
+                  style={{ ...styles.successModalButton, backgroundColor: "#6c757d", marginLeft: 10 }}
+                  onClick={cancelDeleteCreatedAccounts}
                 >
                   Cancel
                 </button>
@@ -2614,22 +3961,26 @@ const styles = {
   subLogo: { margin: 0, fontSize: 14, opacity: 0.9 },
 
 nav: {
-  padding: "12px 14px",
-  marginBottom: 8,
+  padding: "14px 16px",
+  marginBottom: 12,
   cursor: "pointer",
   display: "flex",
   alignItems: "center",
   gap: 10,
+  borderRadius: 6,
+  transition: "all 0.2s",
 },
 
 navActive: {
-  padding: "12px 14px",
+  padding: "14px 16px",
   background: "#5c0013",
   borderRadius: 6,
-  marginBottom: 8,
+  marginBottom: 12,
   display: "flex",
   alignItems: "center",
   gap: 10,
+  fontWeight: 600,
+  transition: "all 0.2s",
 },
 
 
@@ -2650,41 +4001,64 @@ navActive: {
 
   cards: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 20,
-    marginBottom: 25,
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 28,
+    marginBottom: 32,
   },
 
   card: {
     background: "white",
-    padding: 20,
+    padding: 28,
     borderTop: `5px solid ${maroon}`,
-    borderRadius: 10,
+    borderRadius: 12,
+    marginBottom: 24,
+    boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
   },
 
   filterBar: {
     display: "flex",
-    gap: 12,
+    gap: 18,
     flexWrap: "wrap",
-    marginBottom: 20,
+    marginBottom: 28,
   },
 
   input: {
-    padding: 10,
-    borderRadius: 6,
-    border: "1px solid #ccc",
+    padding: 14,
+    borderRadius: 8,
+    border: "1px solid #ddd",
     flex: "1 1 220px",
+    fontSize: 14,
+    marginBottom: 4,
   },
 
   tableBox: {
     background: "white",
-    padding: 24,
-    borderRadius: 10,
+    padding: 32,
+    borderRadius: 12,
+    boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+    marginBottom: 32,
   },
 
   table: {
     width: "100%",
     borderCollapse: "collapse",
+  },
+
+  tableHeader: {
+    padding: "18px 16px",
+    backgroundColor: "#f8f9fa",
+    borderBottom: "2px solid #e9ecef",
+    fontWeight: 600,
+    fontSize: 14,
+    color: "#333",
+    textAlign: "left",
+  },
+
+  tableCell: {
+    padding: "16px 14px",
+    borderBottom: "1px solid #f0f0f0",
+    fontSize: 14,
+    color: "#333",
   },
 
   approved: {
@@ -2910,34 +4284,35 @@ navActive: {
 
   modal: {
     background: "white",
-    padding: 30,
-    borderRadius: 12,
-    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.15)",
+    padding: 36,
+    borderRadius: 14,
+    boxShadow: "0 6px 30px rgba(0, 0, 0, 0.15)",
     minWidth: 400,
-    maxWidth: 500,
+    maxWidth: 550,
     maxHeight: "85vh",
     overflow: "auto",
   },
 
   modalTitle: {
-    margin: "0 0 10px 0",
-    fontSize: 20,
-    fontWeight: 600,
+    margin: "0 0 12px 0",
+    fontSize: 22,
+    fontWeight: 700,
     color: maroon,
   },
 
   modalSubtitle: {
-    margin: "0 0 20px 0",
-    fontSize: 14,
+    margin: "0 0 24px 0",
+    fontSize: 15,
     color: "#666",
+    lineHeight: 1.5,
   },
 
   textarea: {
     width: "100%",
     height: 120,
-    padding: 12,
-    borderRadius: 6,
-    border: "1px solid #ccc",
+    padding: 14,
+    borderRadius: 8,
+    border: "1px solid #ddd",
     fontFamily: "Segoe UI",
     fontSize: 14,
     resize: "vertical",
@@ -2946,29 +4321,33 @@ navActive: {
 
   modalButtons: {
     display: "flex",
-    gap: 12,
-    marginTop: 20,
+    gap: 16,
+    marginTop: 28,
     justifyContent: "flex-end",
   },
 
   cancelButton: {
     color: "white",
-    background: "#666",
-    padding: "10px 20px",
-    borderRadius: 6,
+    background: "#999",
+    padding: "12px 24px",
+    borderRadius: 8,
     border: "none",
     cursor: "pointer",
     fontWeight: 600,
+    fontSize: 14,
+    transition: "all 0.2s",
   },
 
   confirmButton: {
     color: "white",
     background: "#22c55e",
-    padding: "10px 20px",
-    borderRadius: 6,
+    padding: "12px 24px",
+    borderRadius: 8,
     border: "none",
     cursor: "pointer",
     fontWeight: 600,
+    fontSize: 14,
+    transition: "all 0.2s",
   },
   badge: {
   marginLeft: "auto",
@@ -2986,17 +4365,17 @@ navActive: {
 
   /* ===== DEPARTMENT VIEW STYLES ===== */
   departmentContainer: {
-    padding: "20px",
+    padding: "32px",
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(700px, 1fr))",
-    gap: "20px",
+    gridTemplateColumns: "repeat(auto-fill, minmax(750px, 1fr))",
+    gap: "32px",
   },
 
   departmentSection: {
     background: "#fff",
     border: `2px solid ${maroon}`,
-    borderRadius: "8px",
-    padding: "20px",
+    borderRadius: "10px",
+    padding: "28px",
     boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
   },
 
@@ -3005,37 +4384,37 @@ navActive: {
     justifyContent: "space-between",
     alignItems: "center",
     borderBottom: `2px solid ${maroon}`,
-    paddingBottom: "12px",
-    marginBottom: "16px",
+    paddingBottom: "16px",
+    marginBottom: "24px",
   },
 
   deptTitle: {
     margin: "0",
-    fontSize: "18px",
+    fontSize: "20px",
     fontWeight: "700",
     color: maroon,
   },
 
   deptCount: {
-    fontSize: "12px",
+    fontSize: "13px",
     color: "#666",
     fontWeight: "500",
   },
 
   deptSubsection: {
-    marginBottom: "16px",
+    marginBottom: "24px",
   },
 
   statusHeader: {
-    margin: "12px 0 8px 0",
-    fontSize: "14px",
+    margin: "16px 0 12px 0",
+    fontSize: "15px",
     fontWeight: "600",
     color: "#2d5f2d",
   },
 
   statusHeaderDeclined: {
-    margin: "12px 0 8px 0",
-    fontSize: "14px",
+    margin: "16px 0 12px 0",
+    fontSize: "15px",
     fontWeight: "600",
     color: "#d32f2f",
   },
@@ -3043,15 +4422,16 @@ navActive: {
   deptTable: {
     width: "100%",
     borderCollapse: "collapse",
-    marginBottom: "8px",
-    fontSize: "13px",
+    marginBottom: "16px",
+    fontSize: "14px",
   },
 
   noDeptFiles: {
     textAlign: "center",
     color: "#999",
     fontStyle: "italic",
-    margin: "20px 0",
+    margin: "28px 0",
+    padding: "20px",
   },
 
   successModalContent: {
@@ -3065,19 +4445,19 @@ navActive: {
 
   successModalHeader: {
     background: "#22c55e",
-    padding: "20px",
+    padding: "24px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
   },
 
   successModalBody: {
-    padding: "20px",
+    padding: "28px",
     textAlign: "center",
   },
 
   successModalFooter: {
-    padding: "15px 20px",
+    padding: "20px 28px",
     display: "flex",
     justifyContent: "center",
     background: "#f5f5f5",
@@ -3087,19 +4467,19 @@ navActive: {
   successModalButton: {
     background: "#22c55e",
     color: "white",
-    padding: "10px 30px",
+    padding: "12px 32px",
     borderRadius: 6,
     border: "none",
     cursor: "pointer",
     fontWeight: 600,
-    fontSize: 14,
+    fontSize: 15,
   },
 
   /* ===== PPMP STYLES ===== */
   ppmpInputContainer: {
     display: "flex",
-    gap: 12,
-    marginTop: 16,
+    gap: 16,
+    marginTop: 20,
   },
 
   ppmpInput: {
@@ -3126,18 +4506,18 @@ navActive: {
   ppmpDeptGrid: {
     display: "flex",
     flexWrap: "wrap",
-    gap: 12,
-    marginTop: 16,
+    gap: 16,
+    marginTop: 20,
   },
 
   ppmpDeptTag: {
     background: "#f0f0f0",
     border: `2px solid ${maroon}`,
-    padding: "8px 12px",
+    padding: "10px 16px",
     borderRadius: 20,
     display: "flex",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
     fontSize: 14,
     fontWeight: 600,
     color: maroon,

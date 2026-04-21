@@ -308,6 +308,16 @@ export default function Auth({ onLogin, onBackToRole }) {
         </div>
       )}
 
+      {/* Loading Modal */}
+      {loading && (
+        <div style={styles.loadingOverlay}>
+          <div style={styles.loadingContainer}>
+            <div style={styles.loadingSpinner}></div>
+            <p style={styles.loadingText}>{isSignup ? "Submitting request..." : "Logging in..."}</p>
+          </div>
+        </div>
+      )}
+
       <div style={styles.footer}>
         <button
           onClick={onBackToRole}
@@ -315,7 +325,7 @@ export default function Auth({ onLogin, onBackToRole }) {
         >
           ← Back to Role Selection
         </button>
-        <p style={styles.footerText}>© 2026 BAC | Records Management System</p>
+        {/* <p style={styles.footerText}>© 2026 BAC | Records Management System</p> */}
       </div>
     </div>
     </>
@@ -325,12 +335,15 @@ export default function Auth({ onLogin, onBackToRole }) {
 const styles = {
   container: {
     display: "flex",
+    flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
     width: "100vw",
-    height: "100vh",
+    minHeight: "100vh",
     background: "linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%)",
     fontFamily: "Segoe UI",
+    padding: "20px",
+    boxSizing: "border-box",
   },
 
   formCard: {
@@ -465,9 +478,11 @@ const styles = {
 
   footer: {
     padding: 15,
-    background: "#f9f9f9",
-    borderTop: "1px solid #eee",
+    background: "transparent",
     textAlign: "center",
+    marginTop: 20,
+    width: "100%",
+    maxWidth: 450,
   },
 
   backButton: {

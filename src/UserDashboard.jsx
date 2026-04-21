@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { saveFilesToFirestore } from "./firebase/userService";
+import { saveFilesToFirestore, getUserDocument } from "./firebase/userService";
+import { AlertCircle } from "lucide-react";
 import profileImage from "./assets/profile2.jpg";
 
 const maroon = "#7a0019";
@@ -37,7 +38,9 @@ export default function UserDashboard({ files, setFiles }) {
     });
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", flexDirection: "column", gap: 20 }}>
-        <div style={{ fontSize: 18, color: "#999" }}>⚠️ Error loading user dashboard.</div>
+        <div style={{ fontSize: 18, color: "#999", display: "flex", alignItems: "center", gap: 10 }}>
+          <AlertCircle size={24} /> Error loading user dashboard.
+        </div>
         <button onClick={() => window.location.reload()} style={{ padding: "10px 20px", background: "#7a0019", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
           Refresh Page
         </button>
@@ -51,7 +54,11 @@ export default function UserDashboard({ files, setFiles }) {
   const [showUploadSuccessModal, setShowUploadSuccessModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
-  const [department, setDepartment] = useState("");
+  const [userDepartment, setUserDepartment] = useState(() => {
+    // Get department from current user data
+    return currentUser?.department || "";
+  });
+  const [requestingUser, setRequestingUser] = useState("");
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [showDeclineModal, setShowDeclineModal] = useState(false);
@@ -85,7 +92,40 @@ export default function UserDashboard({ files, setFiles }) {
     const saved = localStorage.getItem("bacUsers");
     return saved ? JSON.parse(saved) : [];
   });
-
+  const [ppmpOfficeTemplates, setPpmpOfficeTemplates] = useState(() => {
+    const saved = localStorage.getItem("ppmpOfficeTemplates");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [currentOfficeTemplate, setCurrentOfficeTemplate] = useState(null);
+  const [showEditItemModal, setShowEditItemModal] = useState(false);
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [editingItemData, setEditingItemData] = useState({
+    name: "",
+    status: "No PPMP",
+    dueDate: "",
+    description: "",
+    proofImage: null
+  });
+  const [ppmpUserInstances, setPpmpUserInstances] = useState(() => {
+    const saved = localStorage.getItem("ppmpUserInstances");
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [newPpmpItem, setNewPpmpItem] = useState({
+    name: "",
+    status: "No PPMP",
+    dueDate: "",
+    description: "",
+    proofImage: null
+  });
+  const [showDeleteItemModal, setShowDeleteItemModal] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
+  const [showPpmpSuccessMessage, setShowPpmpSuccessMessage] = useState(false);
+  const [ppmpSuccessMessage, setPpmpSuccessMessage] = useState("");
+  const [itemProofImages, setItemProofImages] = useState(() => {
+    const saved = localStorage.getItem("itemProofImages");
+    return saved ? JSON.parse(saved) : {};
+  });
 
 
   // ✅ GET ONLY THIS USER'S FILES FROM GLOBAL STORAGE
@@ -114,6 +154,67 @@ export default function UserDashboard({ files, setFiles }) {
   const declinedFiles = useMemo(() => {
     return sortedUserFiles.filter(f => f.status === "Declined");
   }, [sortedUserFiles]);
+
+  // ✅ FETCH USER DEPARTMENT FROM FIRESTORE
+  useEffect(() => {
+    const fetchUserDepartment = async () => {
+      if (!userKey) return;
+      try {
+        const result = await getUserDocument(userKey);
+        if (result.success && result.data?.department) {
+          console.log("✅ User department loaded from Firestore:", result.data.department);
+          setUserDepartment(result.data.department);
+        }
+      } catch (error) {
+        console.warn("⚠️ Could not fetch user department from Firestore:", error.message);
+      }
+    };
+    fetchUserDepartment();
+  }, [userKey]);
+
+  // ✅ LOAD OFFICE TEMPLATE BASED ON USER DEPARTMENT
+  useEffect(() => {
+    if (userDepartment && ppmpOfficeTemplates.length > 0) {
+      const deptLower = userDepartment.toLowerCase();
+      const template = ppmpOfficeTemplates.find(t => t.officeCode.toLowerCase() === deptLower);
+      if (template) {
+        setCurrentOfficeTemplate(template);
+        console.log("✅ Office template loaded for department:", userDepartment, template);
+      }
+    }
+  }, [userDepartment, ppmpOfficeTemplates]);
+
+  // ✅ LISTEN FOR PPMP OFFICE TEMPLATES UPDATES
+  useEffect(() => {
+    const handleTemplatesUpdate = (event) => {
+      setPpmpOfficeTemplates(event.detail);
+      console.log("🔄 PPMP Office Templates updated from admin");
+    };
+    window.addEventListener("ppmpOfficeTemplatesUpdated", handleTemplatesUpdate);
+    return () => window.removeEventListener("ppmpOfficeTemplatesUpdated", handleTemplatesUpdate);
+  }, []);
+
+  // ✅ PERSIST PPMP USER INSTANCES AND SYNC WITH ADMIN
+  useEffect(() => {
+    try {
+      localStorage.setItem("ppmpUserInstances", JSON.stringify(ppmpUserInstances));
+      // Broadcast to admin dashboard
+      window.dispatchEvent(new CustomEvent("ppmpUserInstancesUpdated", { detail: ppmpUserInstances }));
+      console.log("💾 PPMP User Instances saved and synced with admin");
+    } catch (err) {
+      console.warn("⚠️ Could not save PPMP user instances:", err.message);
+    }
+  }, [ppmpUserInstances]);
+
+  // ✅ PERSIST PROOF IMAGES
+  useEffect(() => {
+    try {
+      localStorage.setItem("itemProofImages", JSON.stringify(itemProofImages));
+      console.log("💾 Item Proof Images saved");
+    } catch (err) {
+      console.warn("⚠️ Could not save proof images:", err.message);
+    }
+  }, [itemProofImages]);
 
   // ================= APPROVAL NOTIFICATIONS (PER USER) =================
   const [shownApprovedFileNames, setShownApprovedFileNames] = useState(() => {
@@ -266,8 +367,12 @@ export default function UserDashboard({ files, setFiles }) {
 
   // ================= HELPERS =================
   const validate = () => {
-    if (!department.trim()) {
-      setError("Department is required before uploading documents.");
+    if (!requestingUser.trim()) {
+      setError("Requesting user name is required before uploading documents.");
+      return false;
+    }
+    if (!userDepartment) {
+      setError("Department is not set for your account. Please contact the administrator.");
       return false;
     }
     setError("");
@@ -298,7 +403,8 @@ export default function UserDashboard({ files, setFiles }) {
 
           resolve({
             name: f.name,
-            department: normalizeDepartment(department),
+            department: normalizeDepartment(userDepartment),
+            requestingUser: requestingUser.trim(),
             type: "General",
             date: date,
             time: time,
@@ -462,6 +568,12 @@ export default function UserDashboard({ files, setFiles }) {
         >
            PPMP Status
         </div>
+        <div 
+          style={view === "templates" ? styles.navActive : styles.nav}
+          onClick={() => setView("templates")}
+        >
+          Templates
+        </div>
       </aside>
 
       {/* MAIN */}
@@ -475,6 +587,8 @@ export default function UserDashboard({ files, setFiles }) {
               ? "My Submissions"
               : view === "guidelines"
               ? "Guidelines"
+              : view === "templates"
+              ? "Document Templates"
               : view === "about"
               ? "About BAC"
               : "PPMP Status"}
@@ -496,18 +610,31 @@ export default function UserDashboard({ files, setFiles }) {
                 </div>
               )}
 
-              {/* DEPARTMENT INPUT */}
+              {/* DEPARTMENT DISPLAY */}
               <input
                 type="text"
-                placeholder="Enter your Department (e.g. Finance, HR, Registrar)"
-                value={department}
+                disabled
+                value={userDepartment || "No department assigned"}
+                placeholder="Department"
+                style={{
+                  ...styles.input,
+                  backgroundColor: "#f5f5f5",
+                  color: userDepartment ? "#333" : "#999",
+                }}
+              />
+
+              {/* REQUESTING USER INPUT */}
+              <input
+                type="text"
+                placeholder="Enter the name of the user requesting this document"
+                value={requestingUser}
                 onChange={(e) => {
-                  setDepartment(normalizeDepartment(e.target.value));
+                  setRequestingUser(e.target.value);
                   if (error) setError("");
                 }}
                 style={{
                   ...styles.input,
-                  ...(error ? styles.inputError : {}),
+                  ...(error && !requestingUser ? styles.inputError : {}),
                 }}
               />
 
@@ -561,6 +688,7 @@ export default function UserDashboard({ files, setFiles }) {
                   <tr>
                     <th>File Name</th>
                     <th>Department</th>
+                    <th>Requesting User</th>
                     <th>Date</th>
                     <th>Time Submitted</th>
                     <th style={{ textAlign: "center" }}>Status</th>
@@ -571,6 +699,7 @@ export default function UserDashboard({ files, setFiles }) {
                     <tr key={i} style={f.status === "Declined" ? { cursor: "pointer" } : {}} onClick={() => f.status === "Declined" && handleViewDeclineReason(f.declineReason)}>
                       <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={(e) => { e.stopPropagation(); handleViewFile(f); }}>{f.name}</td>
                       <td>{f.department}</td>
+                      <td>{f.requestingUser}</td>
                       <td>{f.date}</td>
                       <td>{f.time || "N/A"}</td>
                       <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
@@ -622,6 +751,7 @@ export default function UserDashboard({ files, setFiles }) {
                         <tr>
                           <th>File Name</th>
                           <th>Department</th>
+                          <th>Requesting User</th>
                           <th>Date</th>
                           <th>Time Submitted</th>
                           <th style={{ textAlign: "center" }}>Status</th>
@@ -632,6 +762,7 @@ export default function UserDashboard({ files, setFiles }) {
                           <tr key={i}>
                             <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
                             <td>{f.department}</td>
+                            <td>{f.requestingUser}</td>
                             <td>{f.date}</td>
                             <td>{f.time || "N/A"}</td>
                             <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
@@ -655,6 +786,7 @@ export default function UserDashboard({ files, setFiles }) {
                         <tr>
                           <th>File Name</th>
                           <th>Department</th>
+                          <th>Requesting User</th>
                           <th>Date</th>
                           <th>Time Submitted</th>
                           <th style={{ textAlign: "center" }}>Status</th>
@@ -665,6 +797,7 @@ export default function UserDashboard({ files, setFiles }) {
                           <tr key={i}>
                             <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
                             <td>{f.department}</td>
+                            <td>{f.requestingUser}</td>
                             <td>{f.date}</td>
                             <td>{f.time || "N/A"}</td>
                             <td style={{ textAlign: "center", paddingTop: "16px", paddingBottom: "16px" }}>
@@ -688,6 +821,7 @@ export default function UserDashboard({ files, setFiles }) {
                         <tr>
                           <th>File Name</th>
                           <th>Department</th>
+                          <th>Requesting User</th>
                           <th>Date</th>
                           <th>Time Submitted</th>
                           <th>Decline Reason</th>
@@ -699,6 +833,7 @@ export default function UserDashboard({ files, setFiles }) {
                           <tr key={i}>
                             <td style={{ cursor: "pointer", color: "#0066cc" }} onClick={() => handleViewFile(f)}>{f.name}</td>
                             <td>{f.department}</td>
+                            <td>{f.requestingUser}</td>
                             <td>{f.date}</td>
                             <td>{f.time || "N/A"}</td>
                             <td style={{ fontSize: "13px", color: "#666", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "200px" }} title={f.declineReason}>
@@ -756,7 +891,8 @@ export default function UserDashboard({ files, setFiles }) {
       <div style={styles.guidelineSection}>
         <h4 style={styles.guidelineTitle}>3. Submission Process</h4>
         <ul style={styles.guidelineList}>
-          <li>Enter your department before uploading</li>
+          <li>Your department is automatically set from your account profile</li>
+          <li>Enter the name of the user requesting this document</li>
           <li>Drag and drop files or click to browse your computer</li>
           <li>Review the file details in the confirmation dialog</li>
           <li>Click <strong>Continue</strong> to submit your files</li>
@@ -800,59 +936,7 @@ export default function UserDashboard({ files, setFiles }) {
         </ul>
       </div>
 
-      {/* 7 — TEMPLATES */}
-      <div style={styles.guidelineSection}>
-        <h4 style={styles.guidelineTitle}>7. Document Templates</h4>
-        <p style={{ fontSize: "14px", color: "#555", marginBottom: "12px" }}>
-          Download and use the official BAC-approved templates below to ensure correct formatting and faster approval.
-        </p>
-
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gap: "14px"
-        }}>
-          {docTemplates.length > 0 ? (
-            docTemplates.map((template) => (
-              <div key={template.id} style={{
-                border: "1px solid #ddd",
-                borderRadius: "6px",
-                padding: "14px",
-                background: "#fff"
-              }}>
-                <h5 style={{ margin: "0 0 4px 0", fontSize: "15px" }}>{template.name}</h5>
-                {template.description && (
-                  <p style={{ fontSize: "13px", color: "#555", marginBottom: "10px" }}>{template.description}</p>
-                )}
-                <button
-                  onClick={() => {
-                    const link = document.createElement("a");
-                    link.href = template.fileData;
-                    link.download = template.name;
-                    link.click();
-                  }}
-                  style={{
-                    display: "inline-block",
-                    padding: "6px 10px",
-                    background: maroon,
-                    color: "#fff",
-                    borderRadius: "4px",
-                    fontSize: "12px",
-                    border: "none",
-                    cursor: "pointer"
-                  }}
-                >
-                  Download Template
-                </button>
-              </div>
-            ))
-          ) : (
-            <p style={{ color: "#999", fontSize: "13px" }}>No templates available yet.</p>
-          )}
-        </div>
-      </div>
-
-      {/* SUPPORT */}
+      {/* 7 — SUPPORT */}
       <div style={{ ...styles.guidelineSection, backgroundColor: "#f9f9f9", borderLeft: `4px solid ${maroon}`, marginTop: 20 }}>
         <h4 style={styles.guidelineTitle}>📞 Support</h4>
         <p>For questions or assistance, please contact:</p>
@@ -866,6 +950,111 @@ export default function UserDashboard({ files, setFiles }) {
   </>
 )}
 
+        {/* TEMPLATES VIEW */}
+        {view === "templates" && (
+          <>
+            <div style={styles.card}>
+              <h3>Document Templates</h3>
+              <p style={{ fontSize: "14px", color: "#555", marginBottom: "20px" }}>
+                Download and use the official BAC-approved templates below to ensure correct formatting and faster approval.
+              </p>
+
+              {docTemplates.length > 0 ? (
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(5, 1fr)",
+                  gap: "16px"
+                }}>
+                  {docTemplates.map((template) => (
+                    <div key={template.id} style={{
+                      border: "2px solid #ddd",
+                      borderRadius: "8px",
+                      padding: "16px",
+                      background: "#fff",
+                      transition: "all 0.3s ease",
+                      boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.boxShadow = "0 8px 16px rgba(0,0,0,0.15)";
+                      e.currentTarget.style.transform = "translateY(-4px)";
+                      e.currentTarget.style.borderColor = maroon;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
+                      e.currentTarget.style.transform = "translateY(0)";
+                      e.currentTarget.style.borderColor = "#ddd";
+                    }}>
+                      <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", marginBottom: 12 }}>
+                        <span style={{ fontSize: 24 }}>📄</span>
+                      </div>
+                      <h5 style={{ margin: "0 0 8px 0", fontSize: "15px", fontWeight: 600, color: "#333", lineHeight: 1.3 }}>{template.name}</h5>
+                      {template.description && (
+                        <p style={{ fontSize: "13px", color: "#666", marginBottom: "14px", lineHeight: 1.4 }}>{template.description}</p>
+                      )}
+                      <button
+                        onClick={() => {
+                          const link = document.createElement("a");
+                          link.href = template.fileData;
+                          link.download = template.name;
+                          link.click();
+                        }}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          padding: "10px 12px",
+                          background: maroon,
+                          color: "#fff",
+                          borderRadius: "6px",
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          border: "none",
+                          cursor: "pointer",
+                          transition: "all 0.2s",
+                          textAlign: "center"
+                        }}
+                        onMouseEnter={(e) => e.target.style.opacity = "0.9"}
+                        onMouseLeave={(e) => e.target.style.opacity = "1"}
+                      >
+                         Download
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{
+                  backgroundColor: "#fef2f2",
+                  border: "2px dashed #fca5a5",
+                  borderRadius: 8,
+                  padding: 40,
+                  textAlign: "center"
+                }}>
+                  <p style={{ fontSize: 16, color: "#991b1b", fontWeight: 500, margin: "0 0 8px 0" }}>📋 No Templates Available</p>
+                  <p style={{ fontSize: 13, color: "#dc2626", margin: 0 }}>Document templates will appear here once the admin uploads them.</p>
+                </div>
+              )}
+            </div>
+
+            <div style={styles.card}>
+              <h3>How to Use Templates</h3>
+              <ul style={styles.guidelineList}>
+                <li>Download the template that matches your document type</li>
+                <li>Fill in the required information following the format guidelines</li>
+                <li>Ensure all mandatory fields are completed</li>
+                <li>Save your file with a descriptive name</li>
+                <li>Upload your completed document in the "Document Submission" section</li>
+              </ul>
+            </div>
+
+            <div style={{...styles.card, backgroundColor: "#f0fdf4", borderLeft: `4px solid ${maroon}`}}>
+              <h3 style={{ marginTop: 0, color: maroon }}>💡 Pro Tips</h3>
+              <ul style={{...styles.guidelineList, margin: 0}}>
+                <li>Using official templates significantly speeds up the approval process</li>
+                <li>Keep a copy of your submitted documents for your records</li>
+                <li>If you have questions about template usage, contact support</li>
+              </ul>
+            </div>
+          </>
+        )}
 
         {/* ABOUT BAC VIEW */}
         {view === "about" && (
@@ -1008,65 +1197,583 @@ export default function UserDashboard({ files, setFiles }) {
             <div style={styles.card}>
               <h3>Project Procurement Management Plan (PPMP) Status</h3>
               <p style={styles.cardDescription}>
-                PPMP verification status across all departments.
+                View and manage your office's PPMP items and track completion status.
               </p>
             </div>
 
-            {ppmpDepartments.length > 0 && allUsers.length > 0 ? (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
-                {ppmpDepartments.map((dept) => (
-                  <div key={dept} style={{
-                    backgroundColor: "white",
-                    border: "1px solid #ddd",
-                    borderRadius: "8px",
-                    padding: "20px",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
-                  }}>
-                    <div style={{ marginBottom: "15px" }}>
-                      <h4 style={{ margin: "0 0 10px 0", color: maroon, fontSize: "16px", fontWeight: "600" }}>
-                        {dept}
-                      </h4>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                        {allUsers.map((user, userIdx) => {
-                          const statusKey = `${user.email}_${dept}`;
-                          const status = userPPMPStatuses[statusKey] || "No PPMP";
-                          const statusColor = 
-                            status === "Complete" ? "#22c55e" :
-                            status === "Incomplete" ? "#f97316" :
-                            "#ef4444";
+            {currentOfficeTemplate ? (
+              <>
+                <div style={styles.card}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 20 }}>
+                    <div>
+                      <h3 style={{ margin: 0, color: maroon }}>{currentOfficeTemplate.officeName}</h3>
+                      <p style={{ margin: "8px 0 0", fontSize: 13, color: "#666" }}>
+                        {currentOfficeTemplate.items.length} PPMP Items
+                      </p>
+                    </div>
+                    <button
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: 4,
+                        border: "none",
+                        background: maroon,
+                        color: "white",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        transition: "0.2s"
+                      }}
+                      onMouseEnter={(e) => e.target.style.opacity = "0.9"}
+                      onMouseLeave={(e) => e.target.style.opacity = "1"}
+                      onClick={() => {
+                        setNewPpmpItem({ name: "", status: "No PPMP", dueDate: "", description: "" });
+                        setShowAddItemModal(true);
+                      }}
+                    >
+                      + Add Item
+                    </button>
+                  </div>
 
-                          return (
-                            <div key={userIdx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "13px" }}>
-                              <span style={{ color: "#555", fontWeight: "500" }}>{user.email}</span>
+                  {currentOfficeTemplate.items.length > 0 ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 40, marginTop: 20 }}>
+                      {currentOfficeTemplate.items.map((item, idx) => {
+                        const userKey = `${currentOfficeTemplate.officeCode}_${item.id}`;
+                        const userInstance = ppmpUserInstances[userKey] || {};
+                        const currentStatus = userInstance.status || item.status;
+                        const lastUpdatedBy = userInstance.lastUpdatedBy;
+                        const lastUpdatedAt = userInstance.lastUpdatedAt ? new Date(userInstance.lastUpdatedAt).toLocaleString() : null;
+                        const createdBy = item.createdBy || "Unknown";
+                        const canDeleteItem = createdBy === currentUser?.email;
+                        
+                        const statusColor = currentStatus === "Complete" 
+                          ? { bg: "#ecfdf5", border: "#6ee7b7", text: "#047857" }
+                          : currentStatus === "In Progress"
+                          ? { bg: "#eff6ff", border: "#93c5fd", text: "#0284c7" }
+                          : currentStatus === "Incomplete"
+                          ? { bg: "#fefce8", border: "#fde047", text: "#92400e" }
+                          : { bg: "#fef2f2", border: "#fca5a5", text: "#991b1b" };
+
+                        return (
+                          <div 
+                            key={item.id} 
+                            style={{ 
+                              border: `2px solid ${statusColor.border}`,
+                              borderRadius: 12, 
+                              padding: 20, 
+                              backgroundColor: statusColor.bg,
+                              boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+                              transition: "all 0.3s ease",
+                              display: "flex",
+                              flexDirection: "column",
+                              height: "100%"
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.boxShadow = "0 8px 16px rgba(0,0,0,0.12)";
+                              e.currentTarget.style.transform = "translateY(-2px)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
+                              e.currentTarget.style.transform = "translateY(0)";
+                            }}
+                          >
+                            {/* Status Badge */}
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 16 }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.5 }}>Item #{idx + 1}</span>
                               <span style={{
                                 display: "inline-block",
-                                padding: "4px 10px",
-                                backgroundColor: statusColor,
+                                padding: "6px 14px",
+                                borderRadius: 20,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                backgroundColor: statusColor.border,
                                 color: "white",
-                                borderRadius: "3px",
-                                fontSize: "11px",
-                                fontWeight: "600"
+                                textTransform: "uppercase",
+                                letterSpacing: 0.5,
+                                boxShadow: `0 2px 4px ${statusColor.border}40`
                               }}>
-                                {status}
+                                {currentStatus}
                               </span>
                             </div>
-                          );
-                        })}
-                      </div>
+
+                            {/* Item Title */}
+                            <h4 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: statusColor.text, lineHeight: 1.3, marginBottom: 12 }}>
+                              {item.name}
+                            </h4>
+
+                            {/* Item Description */}
+                            {item.description && (
+                              <p style={{ margin: 0, fontSize: 13, color: "#555", fontStyle: "italic", lineHeight: 1.5, marginBottom: 18, padding: 12, backgroundColor: "rgba(255,255,255,0.6)", borderRadius: 6, borderLeft: `3px solid ${statusColor.border}` }}>
+                                {item.description}
+                              </p>
+                            )}
+
+                            {/* Details Section */}
+                            <div style={{ backgroundColor: "rgba(255,255,255,0.7)", padding: 14, borderRadius: 8, marginBottom: 18, fontSize: 13 }}>
+                              {/* Due Date */}
+                              {item.dueDate && (
+                                <div style={{ marginBottom: 12 }}>
+                                  <p style={{ margin: 0, fontSize: 10, fontWeight: 600, color: "#999", textTransform: "uppercase" }}>Due Date</p>
+                                  <p style={{ margin: "6px 0 0", fontSize: 13, fontWeight: 500, color: "#333" }}>{new Date(item.dueDate).toLocaleDateString()}</p>
+                                </div>
+                              )}
+                              
+                              {/* Created By */}
+                              <div>
+                                <p style={{ margin: 0, fontSize: 10, fontWeight: 600, color: "#999", textTransform: "uppercase" }}>Created By</p>
+                                <p style={{ margin: "6px 0 0", fontSize: 13, fontWeight: 500, color: "#333" }}>{createdBy}</p>
+                              </div>
+                            </div>
+
+                            {/* Last Updated */}
+                            {lastUpdatedAt && (
+                              <div style={{ marginBottom: 18, fontSize: 12, color: "#666", padding: "10px 12px", backgroundColor: "rgba(255,255,255,0.5)", borderRadius: 6, borderLeft: `2px solid ${statusColor.border}` }}>
+                                <p style={{ margin: "0 0 2px 0", fontWeight: 500 }}>Last updated: {lastUpdatedAt}</p>
+                                {lastUpdatedBy && <p style={{ margin: 0, fontSize: 11 }}>by {lastUpdatedBy}</p>}
+                              </div>
+                            )}
+
+                            {/* Image Section */}
+                            {item.proofImage && (
+                              <div style={{ marginBottom: 18, padding: 12, backgroundColor: "rgba(255,255,255,0.8)", border: `1px dashed ${statusColor.border}`, borderRadius: 6 }}>
+                                <p style={{ margin: "0 0 10px 0", fontSize: 11, fontWeight: 600, color: statusColor.text }}>Proof Image</p>
+                                <img 
+                                  src={item.proofImage} 
+                                  alt="Proof" 
+                                  style={{ maxWidth: "100%", maxHeight: 160, borderRadius: 6, cursor: "pointer", border: `2px solid ${statusColor.border}` }} 
+                                  onClick={() => window.open(item.proofImage, "_blank")} 
+                                  title="Click to view full size" 
+                                />
+                              </div>
+                            )}
+
+                            {/* Action Buttons */}
+                            <div style={{ display: "flex", gap: 12, marginTop: "auto", paddingTop: 16, borderTop: `1px solid ${statusColor.border}40` }}>
+                              <button
+                                style={{
+                                  padding: "11px 16px",
+                                  borderRadius: 6,
+                                  border: "none",
+                                  background: statusColor.border,
+                                  color: "white",
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  transition: "all 0.2s",
+                                  flex: 1,
+                                  textTransform: "uppercase",
+                                  letterSpacing: 0.3
+                                }}
+                                onMouseEnter={(e) => e.target.style.opacity = "0.85"}
+                                onMouseLeave={(e) => e.target.style.opacity = "1"}
+                                onClick={() => {
+                                  setEditingItemId(item.id);
+                                  setEditingItemData({
+                                    name: item.name,
+                                    status: currentStatus,
+                                    dueDate: item.dueDate,
+                                    description: item.description,
+                                    proofImage: item.proofImage || null
+                                  });
+                                  setShowEditItemModal(true);
+                                }}
+                              >
+                                Edit
+                              </button>
+                              {canDeleteItem && (
+                                <button
+                                  style={{
+                                    padding: "11px 16px",
+                                    borderRadius: 6,
+                                    border: "none",
+                                    background: "#fca5a5",
+                                    color: "#7f1d1d",
+                                    cursor: "pointer",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    transition: "all 0.2s",
+                                    flex: 1,
+                                    textTransform: "uppercase",
+                                    letterSpacing: 0.3
+                                  }}
+                                  onMouseEnter={(e) => e.target.style.opacity = "0.85"}
+                                  onMouseLeave={(e) => e.target.style.opacity = "1"}
+                                  onClick={() => {
+                                    setItemToDelete(item);
+                                    setShowDeleteItemModal(true);
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ) : (
+                    <div style={{ backgroundColor: "#fef2f2", padding: 20, borderRadius: 8, textAlign: "center", border: "2px dashed #fca5a5" }}>
+                      <p style={{ margin: 0, fontSize: 15, color: "#991b1b", fontWeight: 500 }}>📝 No PPMP items added yet</p>
+                      <p style={{ margin: "8px 0 0", fontSize: 13, color: "#e3d5d5" }}>Click the "+ Add Item" button above to get started</p>
+                    </div>
+                  )}
+                </div>
+              </>
             ) : (
               <div style={styles.card}>
-                <p style={styles.emptyMessage}>
-                  {ppmpDepartments.length === 0 
-                    ? "No PPMP departments have been set up yet." 
-                    : "No users available."}
+                <p style={{ textAlign: "center", color: "#999", padding: "20px" }}>
+                  {userDepartment 
+                    ? `No PPMP template found for your department (${userDepartment}). Please contact BAC admin.`
+                    : "Your department information is not set. Please contact BAC admin."}
                 </p>
               </div>
             )}
           </>
+        )}
+
+        {/* EDIT PPMP ITEM MODAL */}
+        {showEditItemModal && currentOfficeTemplate && (
+          <div style={styles.modalOverlay}>
+            <div style={{ ...styles.modal, maxWidth: 500 }}>
+              <h3 style={{ ...styles.modalTitle, marginBottom: 20, borderBottom: `2px solid ${maroon}`, paddingBottom: 12 }}>Edit PPMP Item</h3>
+              
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Item Name</label>
+                <input
+                  type="text"
+                  value={editingItemData.name}
+                  onChange={(e) => setEditingItemData({ ...editingItemData, name: e.target.value })}
+                  style={{ ...styles.input, width: "100%", boxSizing: "border-box" }}
+                  disabled
+                />
+                <p style={{ fontSize: 12, color: "#999", marginTop: 6, marginBottom: 0 }}>Read-only</p>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Status *</label>
+                <select
+                  value={editingItemData.status}
+                  onChange={(e) => setEditingItemData({ ...editingItemData, status: e.target.value })}
+                  style={{ ...styles.input, width: "100%", boxSizing: "border-box" }}
+                >
+                  <option value="No PPMP">No PPMP</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Incomplete">Incomplete</option>
+                  <option value="Complete">Complete</option>
+                </select>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Due Date</label>
+                <input
+                  type="date"
+                  value={editingItemData.dueDate}
+                  onChange={(e) => setEditingItemData({ ...editingItemData, dueDate: e.target.value })}
+                  style={{ ...styles.input, width: "100%", boxSizing: "border-box" }}
+                  disabled
+                />
+                <p style={{ fontSize: 12, color: "#999", marginTop: 6, marginBottom: 0 }}>Read-only</p>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Description</label>
+                <textarea
+                  value={editingItemData.description}
+                  onChange={(e) => setEditingItemData({ ...editingItemData, description: e.target.value })}
+                  style={{ 
+                    ...styles.textarea, 
+                    height: 100,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: 10,
+                    fontFamily: "inherit",
+                    fontSize: 14,
+                    border: "1px solid #ddd",
+                    borderRadius: 6,
+                    resize: "vertical"
+                  }}
+                  disabled
+                />
+                <p style={{ fontSize: 12, color: "#999", marginTop: 6, marginBottom: 0 }}>Read-only</p>
+              </div>
+
+              <div style={{ ...styles.modalButtons, marginTop: 24, paddingTop: 16, borderTop: "1px solid #e5e7eb" }}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowEditItemModal(false);
+                    setEditingItemId(null);
+                    setEditingItemData({ name: "", status: "No PPMP", dueDate: "", description: "", proofImage: null });
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={{ ...styles.button, background: maroon, flex: 1, color: "white" }}
+                  onClick={() => {
+                    const updated = ppmpOfficeTemplates.map(t =>
+                      t.id === currentOfficeTemplate.id
+                        ? {
+                            ...t,
+                            items: t.items.map(i =>
+                              i.id === editingItemId
+                                ? { ...i, status: editingItemData.status }
+                                : i
+                            )
+                          }
+                        : t
+                    );
+                    setPpmpOfficeTemplates(updated);
+                    localStorage.setItem("ppmpOfficeTemplates", JSON.stringify(updated));
+                    
+                    // Create/update user instance tracking
+                    const userKey = `${currentOfficeTemplate.officeCode}_${editingItemId}`;
+                    const updatedInstances = {
+                      ...ppmpUserInstances,
+                      [userKey]: {
+                        itemId: editingItemId,
+                        itemName: editingItemData.name,
+                        officeCode: currentOfficeTemplate.officeCode,
+                        officeName: currentOfficeTemplate.officeName,
+                        userEmail: userKey.split("_")[0],
+                        status: editingItemData.status,
+                        lastUpdatedBy: currentUser?.email || "User",
+                        lastUpdatedAt: new Date().toISOString()
+                      }
+                    };
+                    setPpmpUserInstances(updatedInstances);
+                    
+                    setShowEditItemModal(false);
+                    setEditingItemId(null);
+                    setEditingItemData({ name: "", status: "No PPMP", dueDate: "", description: "", proofImage: null });
+                    
+                    // Show success message
+                    setPpmpSuccessMessage(`✓ Status updated for "${editingItemData.name}"`);
+                    setShowPpmpSuccessMessage(true);
+                    setTimeout(() => setShowPpmpSuccessMessage(false), 3000);
+                  }}
+                >
+                  Save Status
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ADD PPMP ITEM MODAL */}
+        {showAddItemModal && currentOfficeTemplate && (
+          <div style={styles.modalOverlay}>
+            <div style={{ ...styles.modal, maxWidth: 500 }}>
+              <h3 style={{ ...styles.modalTitle, marginBottom: 20, borderBottom: `2px solid ${maroon}`, paddingBottom: 12 }}>Add New PPMP Item</h3>
+              
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Item Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g., Budget Submission"
+                  value={newPpmpItem.name}
+                  onChange={(e) => setNewPpmpItem({ ...newPpmpItem, name: e.target.value })}
+                  style={{ ...styles.input, width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Initial Status *</label>
+                <select
+                  value={newPpmpItem.status}
+                  onChange={(e) => setNewPpmpItem({ ...newPpmpItem, status: e.target.value })}
+                  style={{ ...styles.input, width: "100%", boxSizing: "border-box" }}
+                >
+                  <option value="No PPMP">No PPMP</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Incomplete">Incomplete</option>
+                  <option value="Complete">Complete</option>
+                </select>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Due Date</label>
+                <input
+                  type="date"
+                  value={newPpmpItem.dueDate}
+                  onChange={(e) => setNewPpmpItem({ ...newPpmpItem, dueDate: e.target.value })}
+                  style={{ ...styles.input, width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Description</label>
+                <textarea
+                  placeholder="Optional description for this PPMP item"
+                  value={newPpmpItem.description}
+                  onChange={(e) => setNewPpmpItem({ ...newPpmpItem, description: e.target.value })}
+                  style={{ 
+                    ...styles.textarea, 
+                    height: 100,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: 10,
+                    fontFamily: "inherit",
+                    fontSize: 14,
+                    border: "1px solid #ddd",
+                    borderRadius: 6,
+                    resize: "vertical"
+                  }}
+                />
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={{ ...styles.label, display: "block", marginBottom: 6, fontWeight: 600, color: "#333" }}>Proof Image</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        const imageData = event.target.result;
+                        setNewPpmpItem({ ...newPpmpItem, proofImage: imageData });
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                  style={{ ...styles.input, width: "100%", boxSizing: "border-box" }}
+                />
+                <p style={{ fontSize: 12, color: "#999", marginTop: 6, marginBottom: 0 }}>💡 Optional: Upload an image as proof for this PPMP item</p>
+                
+                {newPpmpItem.proofImage && (
+                  <div style={{ marginTop: 12, padding: 12, backgroundColor: "#f0fdf4", border: "1px solid #dcfce7", borderRadius: 6 }}>
+                    <p style={{ margin: "0 0 10px 0", fontSize: 12, fontWeight: 600, color: "#166534", display: "flex", alignItems: "center", gap: 6 }}>
+                      ✓ Preview
+                    </p>
+                    <img src={newPpmpItem.proofImage} alt="Proof" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 4, border: "1px solid #dcfce7" }} />
+                  </div>
+                )}
+              </div>
+
+              <div style={{ ...styles.modalButtons, marginTop: 24, paddingTop: 16, borderTop: "1px solid #e5e7eb" }}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowAddItemModal(false);
+                    setNewPpmpItem({ name: "", status: "No PPMP", dueDate: "", description: "", proofImage: null });
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={{ ...styles.button, background: maroon, flex: 1, color: "white" }}
+                  onClick={() => {
+                    if (!newPpmpItem.name.trim()) {
+                      alert("Please enter an item name");
+                      return;
+                    }
+
+                    const newItem = {
+                      id: Date.now(),
+                      name: newPpmpItem.name.trim(),
+                      status: newPpmpItem.status,
+                      dueDate: newPpmpItem.dueDate,
+                      description: newPpmpItem.description.trim(),
+                      proofImage: newPpmpItem.proofImage || null,
+                      createdBy: currentUser?.email || "User",
+                      createdAt: new Date().toISOString()
+                    };
+
+                    const updated = ppmpOfficeTemplates.map(t =>
+                      t.id === currentOfficeTemplate.id
+                        ? {
+                            ...t,
+                            items: [...t.items, newItem]
+                          }
+                        : t
+                    );
+                    setPpmpOfficeTemplates(updated);
+                    localStorage.setItem("ppmpOfficeTemplates", JSON.stringify(updated));
+                    
+                    // Initialize user instance for the new item
+                    const userKey = `${currentOfficeTemplate.officeCode}_${newItem.id}`;
+                    const updatedInstances = {
+                      ...ppmpUserInstances,
+                      [userKey]: {
+                        itemId: newItem.id,
+                        itemName: newItem.name,
+                        officeCode: currentOfficeTemplate.officeCode,
+                        officeName: currentOfficeTemplate.officeName,
+                        status: newItem.status,
+                        lastUpdatedBy: currentUser?.email || "User",
+                        lastUpdatedAt: new Date().toISOString()
+                      }
+                    };
+                    setPpmpUserInstances(updatedInstances);
+                    
+                    setShowAddItemModal(false);
+                    setNewPpmpItem({ name: "", status: "No PPMP", dueDate: "", description: "", proofImage: null });
+                    setPpmpSuccessMessage(`✓ Successfully added "${newItem.name}" to PPMP`);
+                    setShowPpmpSuccessMessage(true);
+                    setTimeout(() => setShowPpmpSuccessMessage(false), 3000);
+                  }}
+                >
+                  Add Item
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE PPMP ITEM MODAL */}
+        {showDeleteItemModal && itemToDelete && (
+          <div style={styles.modalOverlay}>
+            <div style={{ ...styles.modal, maxWidth: 500 }}>
+              <h3 style={{ ...styles.modalTitle, marginBottom: 20, borderBottom: `2px solid ${maroon}`, paddingBottom: 12 }}>Delete PPMP Item</h3>
+              <div style={{ backgroundColor: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 8, padding: 16, marginBottom: 24 }}>
+                <p style={{ margin: 0, fontSize: 14, color: "#991b1b", lineHeight: 1.5 }}>
+                  ⚠️ Are you sure you want to delete <strong>"{itemToDelete.name}"</strong>?
+                </p>
+                <p style={{ margin: "12px 0 0", fontSize: 13, color: "#dc2626" }}>This action cannot be undone.</p>
+              </div>
+              <div style={{ ...styles.modalButtons, paddingTop: 16, borderTop: "1px solid #e5e7eb" }}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowDeleteItemModal(false);
+                    setItemToDelete(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={{ ...styles.button, background: "#ef4444", flex: 1, color: "white" }}
+                  onClick={() => {
+                    const updated = ppmpOfficeTemplates.map(t =>
+                      t.id === currentOfficeTemplate.id
+                        ? {
+                            ...t,
+                            items: t.items.filter(i => i.id !== itemToDelete.id)
+                          }
+                        : t
+                    );
+                    setPpmpOfficeTemplates(updated);
+                    localStorage.setItem("ppmpOfficeTemplates", JSON.stringify(updated));
+                    
+                    // Remove user instance for deleted item
+                    const userKey = `${currentOfficeTemplate.officeCode}_${itemToDelete.id}`;
+                    const updatedInstances = { ...ppmpUserInstances };
+                    delete updatedInstances[userKey];
+                    setPpmpUserInstances(updatedInstances);
+                    
+                    setShowDeleteItemModal(false);
+                    setItemToDelete(null);
+                    setPpmpSuccessMessage(`✓ "${itemToDelete.name}" has been deleted`);
+                    setShowPpmpSuccessMessage(true);
+                    setTimeout(() => setShowPpmpSuccessMessage(false), 3000);
+                  }}
+                >
+                  🗑️ Delete
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {showConfirmModal && (
@@ -1074,7 +1781,7 @@ export default function UserDashboard({ files, setFiles }) {
             <div style={styles.modal}>
               <h3 style={styles.modalTitle}>Confirm Upload</h3>
               <p style={styles.modalSubtitle}>
-                You are about to upload {filesToUpload.length} file{filesToUpload.length !== 1 ? 's' : ''} to the {department} department.
+                You are about to upload {filesToUpload.length} file{filesToUpload.length !== 1 ? 's' : ''} from the {userDepartment} department for {requestingUser}.
               </p>
               <p style={styles.modalSubtitle}>Do you want to continue?</p>
               <div style={styles.modalButtons}>
@@ -1127,6 +1834,7 @@ export default function UserDashboard({ files, setFiles }) {
               <div style={styles.fileInfoBox}>
                 <p><strong>File Name:</strong> {selectedFile.name}</p>
                 <p><strong>Department:</strong> {selectedFile.department}</p>
+                <p><strong>Requesting User:</strong> {selectedFile.requestingUser || "N/A"}</p>
                 <p><strong>Date Uploaded:</strong> {selectedFile.date}</p>
                 <p><strong>Status:</strong> {selectedFile.status}</p>
               </div>
@@ -1223,6 +1931,14 @@ export default function UserDashboard({ files, setFiles }) {
           </div>
         )}
 
+        {/* PPMP SUCCESS TOAST NOTIFICATION */}
+        {showPpmpSuccessMessage && (
+          <div style={styles.ppmpSuccessToast}>
+            <span style={{ marginRight: 12 }}>✓</span>
+            <span>{ppmpSuccessMessage}</span>
+          </div>
+        )}
+
         <footer style={styles.footer}>
           © 2026 BAC | Records Management System
         </footer>
@@ -1257,7 +1973,7 @@ const styles = {
   loadingContainer: {
     background: "white",
     borderRadius: "12px",
-    padding: "50px 40px",
+    padding: "56px 48px",
     textAlign: "center",
     boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
     minWidth: "350px",
@@ -1270,20 +1986,20 @@ const styles = {
     borderTop: `5px solid ${maroon}`,
     borderRadius: "50%",
     animation: "spin 0.8s linear infinite",
-    margin: "0 auto 25px",
+    margin: "0 auto 28px",
   },
 
   loadingTitle: {
     color: maroon,
-    fontSize: "20px",
+    fontSize: "22px",
     fontWeight: 600,
-    margin: "0 0 15px 0",
+    margin: "0 0 16px 0",
   },
 
   uploadProgressText: {
     color: "#666",
     fontSize: "14px",
-    margin: "0 0 20px 0",
+    margin: "0 0 24px 0",
   },
 
   progressBar: {
@@ -1315,7 +2031,7 @@ const styles = {
 
   nav: {
     padding: "14px 16px",
-    marginBottom: 10,
+    marginBottom: 12,
     cursor: "pointer",
     borderRadius: 8,
     fontSize: 15,
@@ -1326,7 +2042,7 @@ const styles = {
     padding: "14px 16px",
     background: "#5c0013",
     borderRadius: 8,
-    marginBottom: 10,
+    marginBottom: 12,
     fontWeight: 600,
     cursor: "pointer",
     fontSize: 15,
@@ -1344,38 +2060,38 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 40,
+    marginBottom: 48,
     borderBottom: "2px solid #ddd",
-    paddingBottom: 20,
+    paddingBottom: 24,
   },
 
-  schoolYear: { fontWeight: 600, fontSize: 16 },
+  schoolYear: { fontWeight: 600, fontSize: 17 },
 
   card: {
     background: "white",
-    padding: 32,
+    padding: 40,
     borderTop: `6px solid ${maroon}`,
     borderRadius: 12,
-    marginBottom: 32,
+    marginBottom: 40,
     boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
   },
 
   errorBox: {
     background: "#fdecea",
     color: "#a60000",
-    padding: "14px 16px",
+    padding: "18px 20px",
     borderRadius: 8,
-    marginBottom: 16,
+    marginBottom: 24,
     borderLeft: "5px solid #a60000",
     fontSize: 14,
   },
 
   input: {
     width: "100%",
-    padding: 12,
+    padding: 15,
     borderRadius: 8,
     border: "1px solid #ddd",
-    marginBottom: 16,
+    marginBottom: 20,
     fontSize: 14,
   },
 
@@ -1385,13 +2101,14 @@ const styles = {
   },
 
   dropZone: {
-    padding: 40,
-    border: "2px dashed #ccc",
+    padding: 56,
+    border: "2px dashed #ddd",
     borderRadius: 12,
     textAlign: "center",
     cursor: "pointer",
     background: "#fafafa",
     transition: "0.2s",
+    marginBottom: 24,
   },
 
   dropZoneActive: {
@@ -1404,22 +2121,43 @@ const styles = {
   },
 
   dropHint: {
-    fontSize: 14,
+    fontSize: 15,
     color: "#666",
-    marginTop: 8,
+    marginTop: 12,
   },
 
   tableBox: {
     background: "white",
-    padding: 32,
+    padding: 36,
     borderRadius: 12,
     boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-    marginBottom: 32,
+    marginBottom: 36,
   },
 
   table: {
     width: "100%",
     borderCollapse: "collapse",
+  },
+
+  tableRow: {
+    borderBottom: "1px solid #f0f0f0",
+  },
+
+  tableHeader: {
+    padding: "18px 16px",
+    backgroundColor: "#f8f9fa",
+    borderBottom: "2px solid #e9ecef",
+    fontWeight: 600,
+    fontSize: 15,
+    color: "#333",
+    textAlign: "left",
+  },
+
+  tableCell: {
+    padding: "16px 14px",
+    fontSize: 14,
+    color: "#333",
+    borderBottom: "1px solid #f0f0f0",
   },
 
   "table th": {
@@ -1448,9 +2186,9 @@ const styles = {
   approved: {
     background: "#e6f4ea",
     color: "#137333",
-    padding: "10px 18px",
+    padding: "10px 20px",
     borderRadius: 20,
-    fontSize: 13,
+    fontSize: 14,
     display: "inline-block",
     whiteSpace: "nowrap",
     fontWeight: 500,
@@ -1459,9 +2197,9 @@ const styles = {
   pending: {
     background: "#fff3cd",
     color: "#856404",
-    padding: "10px 18px",
+    padding: "10px 20px",
     borderRadius: 20,
-    fontSize: 13,
+    fontSize: 14,
     display: "inline-block",
     whiteSpace: "nowrap",
     fontWeight: 500,
@@ -1470,47 +2208,47 @@ const styles = {
   declined: {
     background: "#f8d7da",
     color: "#721c24",
-    padding: "10px 18px",
+    padding: "10px 20px",
     borderRadius: 20,
-    fontSize: 13,
+    fontSize: 14,
     display: "inline-block",
     whiteSpace: "nowrap",
     fontWeight: 500,
   },
 
   note: {
-    fontSize: 14,
+    fontSize: 15,
     color: "#666",
-    marginTop: 16,
-    lineHeight: 1.6,
+    marginTop: 20,
+    lineHeight: 1.7,
   },
 
   guidelineIntro: {
     fontSize: 16,
     color: "#333",
-    marginBottom: 28,
-    lineHeight: 1.7,
+    marginBottom: 32,
+    lineHeight: 1.8,
   },
 
   guidelineSection: {
-    marginBottom: 32,
-    paddingBottom: 24,
+    marginBottom: 36,
+    paddingBottom: 28,
     borderBottom: "1px solid #eee",
   },
 
   guidelineTitle: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: 700,
     color: maroon,
-    marginBottom: 16,
+    marginBottom: 18,
     marginTop: 0,
   },
 
   guidelineList: {
-    marginLeft: 24,
-    marginTop: 12,
+    marginLeft: 32,
+    marginTop: 16,
     color: "#555",
-    lineHeight: 2,
+    lineHeight: 2.1,
     fontSize: 15,
   },
 
@@ -1542,65 +2280,65 @@ const styles = {
   },
 
   aboutSection: {
-    marginBottom: 36,
-    paddingBottom: 24,
+    marginBottom: 40,
+    paddingBottom: 28,
     borderBottom: "1px solid #eee",
   },
 
   aboutTitle: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: 700,
     color: maroon,
-    marginBottom: 16,
+    marginBottom: 18,
     marginTop: 0,
   },
 
   aboutText: {
     fontSize: 15,
     color: "#555",
-    lineHeight: 1.9,
-    margin: "0 0 18px 0",
+    lineHeight: 2,
+    margin: "0 0 20px 0",
   },
 
   valuesContainer: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 18,
-    marginTop: 18,
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 24,
+    marginTop: 24,
   },
 
   valueCard: {
     background: "#f9f9f9",
-    padding: 20,
+    padding: 24,
     borderRadius: 10,
     border: `3px solid ${maroon}`,
     textAlign: "center",
   },
 
   valueTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: 700,
     color: maroon,
-    margin: "0 0 12px 0",
+    margin: "0 0 14px 0",
   },
 
   valueText: {
     fontSize: 14,
     color: "#666",
     margin: 0,
-    lineHeight: 1.7,
+    lineHeight: 1.8,
   },
 
   staffContainer: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 24,
-    marginTop: 24,
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 28,
+    marginTop: 28,
   },
 
   staffMember: {
     textAlign: "center",
-    padding: 20,
+    padding: 24,
     backgroundColor: "#f9f9f9",
     borderRadius: 12,
     border: "1px solid #ddd",
@@ -1608,29 +2346,29 @@ const styles = {
   },
 
   staffPlaceholder: {
-    width: 100,
-    height: 100,
+    width: 110,
+    height: 110,
     borderRadius: "50%",
     background: maroon,
     color: "white",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    margin: "0 auto 16px",
-    fontSize: 16,
+    margin: "0 auto 18px",
+    fontSize: 18,
   },
 
   staffImage: {
-    width: 100,
-    height: 100,
+    width: 110,
+    height: 110,
     borderRadius: "50%",
     objectFit: "cover",
-    margin: "0 auto 16px",
+    margin: "0 auto 18px",
     display: "block",
   },
 
   staffInitial: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: "bold",
   },
 
@@ -1638,53 +2376,53 @@ const styles = {
     fontSize: 16,
     fontWeight: 700,
     color: "#333",
-    margin: "12px 0 6px 0",
+    margin: "14px 0 8px 0",
   },
 
   staffPosition: {
     fontSize: 13,
     color: maroon,
     fontWeight: 600,
-    margin: "0 0 10px 0",
+    margin: "0 0 12px 0",
   },
 
   staffEmail: {
-    fontSize: 12,
+    fontSize: 13,
     color: "#666",
     margin: 0,
     wordBreak: "break-all",
   },
 
   settingsSection: {
-    marginBottom: 32,
+    marginBottom: 36,
   },
 
   settingsTitle: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: 600,
     color: maroon,
-    margin: "0 0 18px 0",
+    margin: "0 0 20px 0",
   },
 
   settingsDescription: {
-    fontSize: 14,
+    fontSize: 15,
     color: "#666",
-    margin: "0 0 18px 0",
-    lineHeight: 1.7,
+    margin: "0 0 20px 0",
+    lineHeight: 1.8,
   },
 
   profileInputGroup: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: 18,
-    marginBottom: 28,
+    gap: 24,
+    marginBottom: 32,
   },
 
   passwordInputGroup: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: 18,
-    marginBottom: 28,
+    gap: 24,
+    marginBottom: 32,
   },
 
   inputWrapper: {
@@ -1696,11 +2434,11 @@ const styles = {
     fontSize: 14,
     fontWeight: 600,
     color: "#333",
-    marginBottom: 8,
+    marginBottom: 10,
   },
 
   settingsInput: {
-    padding: 12,
+    padding: 14,
     border: "1px solid #ddd",
     borderRadius: 8,
     fontSize: 14,
@@ -1709,10 +2447,10 @@ const styles = {
   },
 
   messageBox: {
-    padding: 16,
+    padding: 18,
     borderRadius: 8,
-    marginBottom: 18,
-    fontSize: 14,
+    marginBottom: 20,
+    fontSize: 15,
     fontWeight: 500,
   },
 
@@ -1731,24 +2469,36 @@ const styles = {
   saveButton: {
     color:"white",
     background: "green",
+    padding: "12px 28px",
+    borderRadius: 8,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 15,
   },
 
   resetPasswordButton: {
     color: "white",
     background: maroon,
+    padding: "12px 28px",
+    borderRadius: 8,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 15,
   },
 
   emptyMessage: {
-    fontSize: 14,
+    fontSize: 15,
     color: "#666",
     textAlign: "center",
-    padding: "20px 0",
+    padding: "28px 0",
     fontStyle: "italic",
   },
 
   footer: {
-    marginTop: 40,
-    paddingTop: 24,
+    marginTop: 48,
+    paddingTop: 28,
     textAlign: "center",
     fontSize: 14,
     color: "#999",
@@ -1770,7 +2520,7 @@ const styles = {
 
   modal: {
     background: "white",
-    padding: 40,
+    padding: 44,
     borderRadius: 14,
     boxShadow: "0 10px 40px rgba(0, 0, 0, 0.2)",
     minWidth: 450,
@@ -1779,7 +2529,7 @@ const styles = {
 
   fileModal: {
     background: "white",
-    padding: 40,
+    padding: 44,
     borderRadius: 14,
     boxShadow: "0 10px 40px rgba(0, 0, 0, 0.2)",
     minWidth: 520,
@@ -1789,33 +2539,33 @@ const styles = {
   },
 
   modalTitle: {
-    margin: "0 0 12px 0",
-    fontSize: 24,
+    margin: "0 0 14px 0",
+    fontSize: 26,
     fontWeight: 700,
     color: "#721c24",
   },
 
   modalTitleSuccess: {
-    margin: "0 0 12px 0",
-    fontSize: 24,
+    margin: "0 0 14px 0",
+    fontSize: 26,
     fontWeight: 700,
     color: "#137333",
   },
 
   modalSubtitle: {
-    margin: "0 0 20px 0",
+    margin: "0 0 24px 0",
     fontSize: 15,
     color: "#666",
-    lineHeight: 1.7,
+    lineHeight: 1.8,
   },
 
   reasonBox: {
     background: "#fff5f5",
-    padding: 20,
+    padding: 24,
     borderRadius: 8,
     border: "1px solid #f8d7da",
-    marginBottom: 24,
-    lineHeight: 1.8,
+    marginBottom: 28,
+    lineHeight: 1.9,
     color: "#333",
     whiteSpace: "pre-wrap",
     wordWrap: "break-word",
@@ -1824,29 +2574,33 @@ const styles = {
 
   modalButtons: {
     display: "flex",
-    gap: 16,
-    marginTop: 28,
+    gap: 18,
+    marginTop: 32,
     justifyContent: "flex-end",
   },
 
   cancelButton: {
     color: "white",
-    background: "#666",
-    padding: "10px 20px",
-    borderRadius: 6,
+    background: "#999",
+    padding: "12px 28px",
+    borderRadius: 8,
     border: "none",
     cursor: "pointer",
     fontWeight: 600,
+    fontSize: 15,
+    transition: "all 0.2s",
   },
 
   confirmButton: {
     color: "white",
     background: "#22c55e",
-    padding: "10px 20px",
-    borderRadius: 6,
+    padding: "12px 28px",
+    borderRadius: 8,
     border: "none",
     cursor: "pointer",
     fontWeight: 600,
+    fontSize: 15,
+    transition: "all 0.2s",
   },
 
   sortButton: {
@@ -1864,28 +2618,28 @@ const styles = {
   sortButtonContainer: {
     display: "flex",
     justifyContent: "flex-end",
-    marginBottom: "16px",
+    marginBottom: "28px",
   },
 
   approvedFilesList: {
     background: "#e6f4ea",
-    padding: 20,
+    padding: 24,
     borderRadius: 8,
-    marginBottom: 24,
+    marginBottom: 28,
     border: "1px solid #34a853",
   },
 
   approvedFileItem: {
     display: "flex",
     alignItems: "center",
-    gap: 12,
-    padding: "10px 0",
+    gap: 14,
+    padding: "12px 0",
     color: "#137333",
     fontSize: 15,
   },
 
   checkmark: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "bold",
     color: "#34a853",
   },
@@ -1894,7 +2648,7 @@ const styles = {
     fontSize: 14,
     color: "#666",
     textAlign: "center",
-    margin: "14px 0 20px 0",
+    margin: "16px 0 24px 0",
     fontStyle: "italic",
   },
 
@@ -1906,12 +2660,12 @@ const styles = {
 
   fileInfoBox: {
     background: "#f9f9f9",
-    padding: 20,
+    padding: 24,
     borderRadius: 8,
     border: "1px solid #ddd",
-    marginBottom: 24,
-    lineHeight: 1.9,
-    fontSize: 14,
+    marginBottom: 28,
+    lineHeight: 2,
+    fontSize: 15,
   },
 
   downloadButton: {
@@ -1920,7 +2674,7 @@ const styles = {
   noFileMessage: {
     color: "#666",
     fontSize: 15,
-    marginBottom: 18,
+    marginBottom: 20,
     textAlign: "center",
   },
 
@@ -1940,8 +2694,8 @@ const styles = {
     background: "#f5f5f5",
     border: "1px solid #ddd",
     borderRadius: 8,
-    padding: 20,
-    marginBottom: 24,
+    padding: 24,
+    marginBottom: 28,
     minHeight: 300,
     maxHeight: 550,
     overflowY: "auto",
@@ -1984,16 +2738,16 @@ const styles = {
     background: "#fff3cd",
     border: "1px solid #ffc107",
     borderRadius: 8,
-    padding: 24,
-    marginBottom: 24,
+    padding: 28,
+    marginBottom: 28,
     textAlign: "center",
   },
 
   noFileDataMessage: {
     color: "#856404",
-    fontSize: 15,
+    fontSize: 16,
     marginBottom: 10,
-    margin: "0 0 12px 0",
+    margin: "0 0 14px 0",
   },
 
   reuploadHint: {
@@ -2005,9 +2759,9 @@ const styles = {
 
   ppmpContainer: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-    gap: 24,
-    marginBottom: 20,
+    gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+    gap: 28,
+    marginBottom: 24,
   },
 
   ppmpCard: {
@@ -2015,7 +2769,7 @@ const styles = {
     border: "1px solid #e5e7eb",
     borderLeft: "5px solid #22c55e",
     borderRadius: 12,
-    padding: 24,
+    padding: 28,
     boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
     transition: "all 0.3s ease",
   },
@@ -2024,12 +2778,12 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
-    gap: 12,
+    marginBottom: 18,
+    gap: 14,
   },
 
   ppmpDepartment: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: 700,
     color: maroon,
     margin: 0,
@@ -2037,25 +2791,43 @@ const styles = {
   },
 
   ppmpStatus: {
-    padding: "6px 14px",
+    padding: "8px 16px",
     borderRadius: 20,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: 600,
     color: "white",
     whiteSpace: "nowrap",
   },
 
   ppmpDescription: {
-    fontSize: 14,
+    fontSize: 15,
     color: "#555",
     margin: 0,
-    lineHeight: 1.6,
+    lineHeight: 1.8,
   },
 
   cardDescription: {
     fontSize: 15,
     color: "#666",
     margin: "12px 0 0 0",
-    lineHeight: 1.7,
+    lineHeight: 1.8,
+  },
+
+  ppmpSuccessToast: {
+    position: "fixed",
+    bottom: 28,
+    right: 28,
+    background: "#e6f4ea",
+    color: "#137333",
+    border: "1px solid #34a853",
+    padding: "16px 24px",
+    borderRadius: 8,
+    display: "flex",
+    alignItems: "center",
+    fontSize: 15,
+    fontWeight: 500,
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+    zIndex: 2000,
+    animation: "slideInUp 0.3s ease-out",
   },
 };

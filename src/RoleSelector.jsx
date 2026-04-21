@@ -1,3 +1,5 @@
+import { Settings } from "lucide-react";
+
 const maroon = "#7a0019";
 
 export default function RoleSelector({ onSelectRole }) {
@@ -16,9 +18,9 @@ export default function RoleSelector({ onSelectRole }) {
           <div style={styles.buttonContainer}>
             <button
               onClick={() => onSelectRole("user")}
-              style={styles.roleButton}
-              onMouseEnter={(e) => (e.target.style.background = "#5a0014")}
-              onMouseLeave={(e) => (e.target.style.background = maroon)}
+              style={{...styles.roleButton, background: "#31ca5f"}}
+              onMouseEnter={(e) => (e.target.style.background = "#2ac53cd7")}
+              onMouseLeave={(e) => (e.target.style.background = "#36a036")}
             >
               <div style={styles.roleIcon}>👤</div>
               <h3 style={styles.roleTitle}>User</h3>
@@ -27,11 +29,13 @@ export default function RoleSelector({ onSelectRole }) {
 
             <button
               onClick={() => onSelectRole("admin")}
-              style={styles.roleButton}
-              onMouseEnter={(e) => (e.target.style.background = "#5a0014")}
-              onMouseLeave={(e) => (e.target.style.background = maroon)}
+              style={{...styles.roleButton, background: "#750519f3"}}
+              onMouseEnter={(e) => (e.target.style.background = "#e50e48")}
+              onMouseLeave={(e) => (e.target.style.background = "#77172a")}
             >
-              <div style={styles.roleIcon}>⚙️</div>
+              <div style={{...styles.roleIcon, display: "flex", alignItems: "center", justifyContent: "center"}}>
+                <Settings size={40} color="white" strokeWidth={1.5} />
+              </div>
               <h3 style={styles.roleTitle}>Administrator</h3>
               <p style={styles.roleDescription}>Manage and approve documents</p>
             </button>
@@ -48,7 +52,7 @@ const styles = {
     justifyContent: "center",
     alignItems: "center",
     minHeight: "100vh",
-    background: `linear-gradient(135deg, ${maroon} 0%, #5a0014 100%)`,
+    background: `linear-gradient(135deg, ${maroon} 0%, #96122ef5 100%)`,
     padding: "20px",
     fontFamily: "system-ui, -apple-system, sans-serif"
   },

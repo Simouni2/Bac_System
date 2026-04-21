@@ -29,6 +29,7 @@ export const createUserDocument = async (userId, userData) => {
       firstName: userData.firstName || "",
       lastName: userData.lastName || "",
       role: userData.role || "user",
+      department: userData.department || "",
       createdBy: userData.createdBy || "admin",
       createdDate: userData.createdDate || new Date().toISOString(),
       createdAt: Timestamp.now(),
